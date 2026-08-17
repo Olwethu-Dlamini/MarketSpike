@@ -682,7 +682,7 @@ If it exceeds free margin, cap the size at the margin limit and set `capped_by: 
   "effective_adverse_pips": 26.2,
   "actual_risk_amount_minor": 9956,
   "actual_risk_pct": 0.9956,
-  "required_margin_minor": 137294,
+  "required_margin_minor": 137296,
   "capped_by": null,
   "fx_assumed": false,
   "stale_quote": false,
@@ -718,7 +718,7 @@ raw          = 100 / (26.2 × 10)             = 0.3817 lots
 recommended  = round_down(0.3817, 0.01)      = 0.38 lots
 overexposure = (0.50 − 0.38) / 0.38          = 31.6 %
 actual_risk  = 0.38 × 26.2 × 10              = $99.56   → 0.9956 %
-margin       = 0.38 × 100 000 × 1.0850 × 0.0333 = $1 372.94
+margin       = 0.38 × 100 000 × 1.0850 × 0.0333 = $1 372.96
 ```
 
 Note `actual_risk` of $99.56 against a requested $100.00 — the shortfall is the round-down (§10.4) surfacing honestly rather than the requested figure being echoed back.
