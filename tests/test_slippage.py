@@ -1,6 +1,8 @@
 import json
 import math
 
+import pytest
+
 from marketspike.risk.slippage import (
     FEATURE_ORDER, SlippageModel, fallback_model, load_models, resolve_models,
 )
@@ -17,6 +19,60 @@ def test_p95_never_falls_below_p50_on_the_fallback():
     model = fallback_model("EURUSD")
     features = dict(FEATURES, log_v_ratio=1.5, spread_z=3.0, log_latency_ms=5.0)
     assert model.predict_bps(features, "p95") >= model.predict_bps(features, "p50")
+
+
+def test_eurusd_typical_fallback_is_pinned():
+    # Pins EURUSD's fallback behaviour at a typical FX feature vector
+    # (spread ~1.2 bps, latency ~60ms, average volume/spread conditions) so
+    # that a future crypto-prior edit cannot silently move FX numbers too.
+    # Values below are simply what the (unchanged) fx priors compute today.
+    model = fallback_model("EURUSD")
+    features = dict(
+        FEATURES,
+        log_v_ratio=0.0,
+        spread_z=0.0,
+        log_spread_bps=math.log(1.2),
+        log_latency_ms=math.log(60),
+    )
+    p50 = model.predict_bps(features, "p50")
+    p95 = model.predict_bps(features, "p95")
+    assert p50 == pytest.approx(0.8958780065080824)
+    assert p95 == pytest.approx(4.992392769781189)
+
+
+def test_btcusdt_typical_fallback_is_no_longer_zero():
+    # Regression for the calibration defect: a single FX-tuned linear model
+    # drove both quantiles negative (and clamped to 0.0) for BTCUSDT's
+    # ~770x-tighter relative spread. Ground truth from 23,292 recorded
+    # BTCUSDT ticks (implementation shortfall vs arrival price, 60ms):
+    # measured p50=0.00078 bps, p95=0.20642 bps. Typical feature values at
+    # that time: log_v_ratio=log(0.25)=-1.386, spread_z=0.0,
+    # log_spread_bps=log(0.00156)=-6.463, log_latency_ms=log(60)=4.094.
+    model = fallback_model("BTCUSDT")
+    features = dict(
+        FEATURES,
+        log_v_ratio=math.log(0.25),
+        spread_z=0.0,
+        log_spread_bps=math.log(0.00156),
+        log_latency_ms=math.log(60),
+    )
+    p50 = model.predict_bps(features, "p50")
+    p95 = model.predict_bps(features, "p95")
+    measured_p50 = 0.00078
+    measured_p95 = 0.20642
+    assert p50 > 0.0
+    assert p95 > 0.0
+    # Order-of-magnitude correct against the measured ground truth (within
+    # a factor of ~5), not fitted precisely.
+    assert measured_p50 / 5.0 < p50 < measured_p50 * 5.0
+    assert measured_p95 / 5.0 < p95 < measured_p95 * 5.0
+
+
+def test_fallback_model_selects_different_coefficients_by_asset_class():
+    crypto = fallback_model("BTCUSDT")
+    fx = fallback_model("EURUSD")
+    assert crypto.quantiles["p50"] != fx.quantiles["p50"]
+    assert crypto.quantiles["p95"] != fx.quantiles["p95"]
 
 
 def test_prediction_is_clamped_at_zero():
@@ -166,16 +222,22 @@ def test_p95_never_crosses_below_p50_across_the_realistic_input_range():
     # scaled down faster than the intercept gap, and p95 fell below p50 (or
     # clamped to 0 while p50 stayed positive). Sweep both dimensions, in
     # combination, across the range the fallback priors are tuned to hold.
-    model = fallback_model("EURUSD")
-    log_v_ratios = [-3.0 + 0.5 * i for i in range(11)]  # -3.0 .. +2.0
-    spread_zs = [-5.0 + 1.0 * i for i in range(11)]  # -5.0 .. +5.0
-    for log_v_ratio in log_v_ratios:
-        for spread_z in spread_zs:
-            features = dict(FEATURES, log_v_ratio=log_v_ratio, spread_z=spread_z)
-            quantiles = model.predict_quantiles(features)
-            assert quantiles["p95"] >= quantiles["p50"], (log_v_ratio, spread_z, quantiles)
-            # predict_bps must go through the same repaired path.
-            assert model.predict_bps(features, "p95") == quantiles["p95"]
+    # Covers both asset classes: the fx priors (unchanged) and the new
+    # crypto priors, which have a far fatter p95/p50 ratio (~265x vs fx's
+    # ~6x) and so need their own check that the gap never inverts.
+    for symbol in ("EURUSD", "BTCUSDT"):
+        model = fallback_model(symbol)
+        log_v_ratios = [-3.0 + 0.5 * i for i in range(11)]  # -3.0 .. +2.0
+        spread_zs = [-5.0 + 1.0 * i for i in range(11)]  # -5.0 .. +5.0
+        for log_v_ratio in log_v_ratios:
+            for spread_z in spread_zs:
+                features = dict(FEATURES, log_v_ratio=log_v_ratio, spread_z=spread_z)
+                quantiles = model.predict_quantiles(features)
+                assert quantiles["p95"] >= quantiles["p50"], (
+                    symbol, log_v_ratio, spread_z, quantiles,
+                )
+                # predict_bps must go through the same repaired path.
+                assert model.predict_bps(features, "p95") == quantiles["p95"]
 
 
 def test_p95_never_crosses_below_p50_at_observed_live_v_ratios():

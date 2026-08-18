@@ -3,6 +3,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from marketspike.risk.instruments import REGISTRY
+
 LOGGER = logging.getLogger(__name__)
 
 # Order is part of the persisted model format. Never reorder without bumping
@@ -19,29 +21,103 @@ FEATURE_ORDER: List[str] = [
     "abs_return_5s",
 ]
 
-# Hand-set priors used until a model is trained. They are deliberately
-# conservative and are always reported as "fallback_coefficients" so the demo
-# never degrades silently (spec §9.10).
+# Hand-set priors used until a model is trained per symbol (Task 20). They
+# are deliberately conservative and are always reported as
+# "fallback_coefficients" so the demo never degrades silently (spec §9.10).
 #
-# The intercept gap between p50 and p95 (3.00) is deliberately wide so that
-# the two curves stay ordered (p95 >= p50) across the realistic input range
-# without relying on the predict_quantiles() crossing guard: specifically for
-# log_v_ratio down to -3.0 and spread_z down to -5.0 (even in combination —
-# the worst case, log_v_ratio=-3.0 AND spread_z=-5.0 simultaneously, leaves a
-# margin of 0.25 bps). p95 is still meaningfully more sensitive than p50 to
-# volatility (log_v_ratio coefficient 0.60 vs 0.10) and spread (0.30 vs 0.05).
-# The predict_quantiles() max() repair remains as a backstop for combinations
-# outside that range, and for trained models fitted independently per quantile.
-_FALLBACK: Dict[str, Dict[str, Any]] = {
-    "p50": {
-        "intercept": 0.60,
-        "coefficients": [0.10, 0.05, 0.50, 0.05, 0.0, 0.0, 0.0, 0.20, 0.0],
+# A single linear-in-log(spread) model cannot serve both FX and crypto: FX
+# spreads run ~1.2 bps while BTCUSDT's spread is ~0.00156 bps (~770x
+# tighter in relative terms), so log_spread_bps for crypto sits around -6.46
+# — a value the FX-tuned priors were never calibrated against, and which
+# drove both quantiles negative and into the max(0.0, ...) clamp (the
+# BTCUSDT "recommended == naive lot size" defect). Priors are therefore kept
+# per asset class; fallback_model() picks the right set for the symbol.
+#
+# fx: the original, unretouched coefficients — EURUSD behaviour is
+# unchanged. The intercept gap between p50 and p95 (3.00) is deliberately
+# wide so that the two curves stay ordered (p95 >= p50) across the
+# realistic input range without relying on the predict_quantiles() crossing
+# guard: specifically for log_v_ratio down to -3.0 and spread_z down to
+# -5.0 (even in combination — the worst case, log_v_ratio=-3.0 AND
+# spread_z=-5.0 simultaneously, leaves a margin of 0.25 bps). p95 is still
+# meaningfully more sensitive than p50 to volatility (log_v_ratio
+# coefficient 0.60 vs 0.10) and spread (0.30 vs 0.05). The
+# predict_quantiles() max() repair remains as a backstop for combinations
+# outside that range, and for trained models fitted independently per
+# quantile.
+#
+# crypto: calibrated against 23,292 recorded BTCUSDT ticks (implementation
+# shortfall vs arrival price at 60ms), measured p50=0.00078 bps (exactly
+# half the spread, as designed), p95=0.20642 bps, p99=0.82701 bps. At the
+# typical vector (log_v_ratio=log(0.25)=-1.386, spread_z=0.0,
+# log_spread_bps=log(0.00156)=-6.463, log_latency_ms=log(60)=4.094):
+#   - Non-spread coefficients and the p50 intercept are the FX p50 set
+#     scaled by s = 1/769.23 (the measured FX/BTC spread ratio), because
+#     these features are already dimensionless log-ratios/z-scores and the
+#     only reason their FX-tuned magnitudes are too large for crypto is the
+#     ~770x smaller overall cost scale.
+#   - log_spread_bps gets its own small positive coefficient (0.000013)
+#     rather than a scaled-down 0.50: log_spread_bps itself is ~-6.46 for
+#     crypto vs ~+0.18 for FX, so naively scaling the FX coefficient would
+#     let this one term dominate and swing the prediction negative again.
+#   - p95's non-spread coefficients keep the FX p95/p50 sensitivity ratio
+#     (6x for log_v_ratio/spread_z/log_latency_ms/in_event_window, 1.8x for
+#     log_spread_bps); its intercept (0.206056) is then solved exactly so
+#     predict_bps at the typical vector reproduces the measured p95
+#     (0.20642) — crypto's p95/p50 ratio (~265x) is far fatter than FX's
+#     (6x), reflecting a thin-book tail risk that isn't simply proportional
+#     to the median spread cost, so it cannot come from the same scale
+#     factor as p50.
+#   - Solved with scripts/tune fallback exercise (see task-17 report); not
+#     fitted to full precision, only to the right order of magnitude.
+_FALLBACK: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "fx": {
+        "p50": {
+            "intercept": 0.60,
+            "coefficients": [0.10, 0.05, 0.50, 0.05, 0.0, 0.0, 0.0, 0.20, 0.0],
+        },
+        "p95": {
+            "intercept": 3.60,
+            "coefficients": [0.60, 0.30, 0.90, 0.30, 0.0, 0.0, 0.0, 1.20, 0.0],
+        },
     },
-    "p95": {
-        "intercept": 3.60,
-        "coefficients": [0.60, 0.30, 0.90, 0.30, 0.0, 0.0, 0.0, 1.20, 0.0],
+    "crypto": {
+        "p50": {
+            "intercept": 0.00078,
+            "coefficients": [
+                0.00013, 0.000065, 0.000013, 0.000065,
+                0.0, 0.0, 0.0, 0.00026, 0.0,
+            ],
+        },
+        "p95": {
+            "intercept": 0.206056,
+            "coefficients": [
+                0.00078, 0.00039, 0.000023, 0.00039,
+                0.0, 0.0, 0.0, 0.00156, 0.0,
+            ],
+        },
     },
 }
+
+# Symbols whose quote currency isn't in the instrument registry (or which
+# aren't registered at all) still need an asset-class guess. USDT/USDC are
+# unambiguous crypto stablecoin quotes; a bare "USD" suffix is NOT included
+# here because it also matches FX pairs like EURUSD.
+_CRYPTO_QUOTE_CCYS = frozenset({"USDT", "USDC"})
+_CRYPTO_SUFFIXES = ("USDT", "USDC")
+
+
+def _asset_class(symbol: str) -> str:
+    # marketspike.risk.instruments imports only json/os/dataclasses/types/
+    # typing and never imports slippage (or anything that does), so this
+    # import is not circular — checked by reading instruments.py before
+    # adding it here. Prefer its quote_ccy when the symbol is registered,
+    # since that's an explicit, curated signal rather than a guess; fall
+    # back to a symbol-suffix rule for anything not (yet) in the registry.
+    instrument = REGISTRY.get(symbol)
+    if instrument is not None:
+        return "crypto" if instrument.quote_ccy in _CRYPTO_QUOTE_CCYS else "fx"
+    return "crypto" if symbol.endswith(_CRYPTO_SUFFIXES) else "fx"
 
 
 class SlippageModel:
@@ -139,9 +215,10 @@ class SlippageModel:
 
 
 def fallback_model(symbol: str) -> SlippageModel:
+    asset_class = _asset_class(symbol)
     return SlippageModel(
         symbol=symbol,
-        quantiles={q: dict(spec) for q, spec in _FALLBACK.items()},
+        quantiles={q: dict(spec) for q, spec in _FALLBACK[asset_class].items()},
         version="fallback-v1",
         source="fallback_coefficients",
     )
