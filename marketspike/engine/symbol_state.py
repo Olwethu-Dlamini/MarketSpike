@@ -242,8 +242,8 @@ class SymbolEngine:
                 {
                     "type": "latency", "symbol": self.symbol,
                     "excess_transit_us": excess_us, "engine_us": engine_us,
-                    "delivery_us": None, "p50_us": p50, "p95_us": p95,
-                    "p99_us": p99,
+                    "delivery_us": self.bus.delivery_us, "p50_us": p50,
+                    "p95_us": p95, "p99_us": p99,
                     "source": "simulated" if tick.source == "simulated" else "estimated",
                     "baseline_includes_clock_offset": True,
                 }

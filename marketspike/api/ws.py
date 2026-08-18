@@ -155,6 +155,15 @@ async def stream(websocket: WebSocket) -> None:
                     client_recv_ns=client_recv_ns,
                 )
                 sync.add(round_trip, offset)
+                best_round_trip_ns = sync.best_round_trip_ns
+                if best_round_trip_ns is not None:
+                    # One-way delivery is estimated -- not directly
+                    # measured -- as half the least-delayed round trip
+                    # seen so far (spec §6.3): that sample carries the
+                    # least path asymmetry, so it's the best available
+                    # proxy for a one-way duration. //2000 combines the
+                    # ns -> us conversion with the halving in one step.
+                    bus.record_delivery(max(0, best_round_trip_ns // 2000))
             else:
                 # Unknown message types are ignored, never fatal (spec §12.3).
                 await websocket.send_json(

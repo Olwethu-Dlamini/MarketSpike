@@ -1,5 +1,6 @@
 import asyncio
 from collections import deque
+from statistics import median as _median
 from typing import Any, Deque, Dict, List
 
 
@@ -51,6 +52,10 @@ class Bus:
     def __init__(self) -> None:
         self._subscribers: List[Subscription] = []
         self._seq = 0
+        # Recent one-way client delivery samples (microseconds), bounded so
+        # a long-lived connection doesn't grow this without limit and so a
+        # stale sample from long ago doesn't outvote current conditions.
+        self._delivery: Deque[int] = deque(maxlen=64)
 
     def next_seq(self) -> int:
         self._seq += 1
@@ -76,3 +81,25 @@ class Bus:
     @property
     def subscriber_count(self) -> int:
         return len(self._subscribers)
+
+    def record_delivery(self, delivery_us: int) -> None:
+        """Record one client-reported one-way delivery sample (microseconds).
+
+        Negative values (a clock-sync artefact, never a real duration) are
+        dropped rather than recorded.
+        """
+        if delivery_us >= 0:
+            self._delivery.append(delivery_us)
+
+    @property
+    def delivery_us(self) -> Any:
+        """Median of recent client delivery samples, or None before any.
+
+        This is engine/api's seam for delivery latency: the WebSocket
+        handshake (api/ws.py) is the only place with the client's own
+        timestamps, and it reports here via `record_delivery()` rather than
+        engine/ importing api/.
+        """
+        if not self._delivery:
+            return None
+        return int(_median(self._delivery))
