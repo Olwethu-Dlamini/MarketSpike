@@ -7,6 +7,14 @@ name = "marketspike"
 version = "1.0.0"
 requires-python = ">=3.8"
 
+# Declare the package explicitly. Without this, setuptools' flat-layout
+# auto-discovery sees every top-level directory as a candidate package and
+# aborts with "Multiple top-level packages discovered" once `scenarios/`
+# (or any other root dir) exists -- which breaks a clean build from a fresh
+# clone even though an existing editable install keeps working locally.
+[tool.setuptools.packages.find]
+include = ["marketspike*"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
