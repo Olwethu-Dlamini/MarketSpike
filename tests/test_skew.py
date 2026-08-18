@@ -1,3 +1,5 @@
+import random
+
 from marketspike.clock.skew import SkewEstimator
 
 SECOND = 1_000_000_000
@@ -38,3 +40,57 @@ def test_clock_drift_backwards_is_clamped_not_negative():
     est = SkewEstimator(window_s=60.0)
     est.update(venue_ts_ns=0, recv_ts_ns=5 * SECOND)
     assert est.update(venue_ts_ns=10 * SECOND, recv_ts_ns=10 * SECOND) == 0
+
+
+def test_monotonic_deque_matches_brute_force_window_minimum():
+    # The monotonic deque is an optimisation over "scan the window for the
+    # minimum". Prove the optimisation is exact: replay a long randomised
+    # sequence and independently recompute the window minimum by brute
+    # force, then assert the estimator's excess matches at every step.
+    rng = random.Random(1234567)
+    window_s = 5.0
+    est = SkewEstimator(window_s=window_s)
+    window_ns = int(window_s * SECOND)
+
+    history = []  # list of (recv_ts_ns, raw_ns), append-only, in time order
+    recv_ts_ns = 0
+    for _ in range(5000):
+        recv_ts_ns += rng.randint(1, 50_000_000)  # up to 50ms between ticks
+        skew_and_transit = 179_000_000  # constant-ish baseline, like the brief's Binance example
+        jitter = rng.randint(0, 20_000_000)  # queueing noise, occasionally large
+        venue_ts_ns = recv_ts_ns - (skew_and_transit + jitter)
+
+        raw = recv_ts_ns - venue_ts_ns
+        history.append((recv_ts_ns, raw))
+        cutoff = recv_ts_ns - window_ns
+        while history and history[0][0] < cutoff:
+            history.pop(0)
+
+        expected_floor = min(r for _, r in history)
+        expected_excess = max(0, (raw - expected_floor) // 1000)
+
+        actual_excess = est.update(venue_ts_ns=venue_ts_ns, recv_ts_ns=recv_ts_ns)
+
+        assert actual_excess == expected_excess
+        assert est.floor_ns == expected_floor
+
+
+def test_internal_deque_stays_bounded_across_many_windows():
+    # The whole point of the monotonic deque is that it doesn't degrade into
+    # keeping every sample. Feed far more ticks than fit in one window and
+    # assert the internal deque never grows anywhere near that count.
+    est = SkewEstimator(window_s=1.0)
+    window_ns = SECOND
+    n_samples = 20_000
+    recv_ts_ns = 0
+    rng = random.Random(42)
+    max_len = 0
+    for _ in range(n_samples):
+        recv_ts_ns += 100_000  # 0.1ms per tick -> ~10 windows' worth of ticks
+        raw = 179_000_000 + rng.randint(0, 3_000_000)
+        venue_ts_ns = recv_ts_ns - raw
+        est.update(venue_ts_ns=venue_ts_ns, recv_ts_ns=recv_ts_ns)
+        max_len = max(max_len, len(est._mono))
+
+    assert len(est._mono) < n_samples // 10
+    assert max_len < n_samples // 10
