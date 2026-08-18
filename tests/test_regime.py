@@ -78,3 +78,27 @@ def test_entered_timestamp_is_recorded_on_transition():
     for step in range(5):
         fsm.update(step * SECOND, 2.0)
     assert fsm.entered_ns == 3 * SECOND
+
+
+def test_transition_fires_exactly_at_the_dwell_boundary_not_early_or_late():
+    fsm = RegimeFSM()
+    assert fsm.update(0, 2.0) is None                      # starts the dwell timer
+    assert fsm.update(3 * SECOND - 1, 2.0) is None         # one ns short of dwell
+    assert fsm.update(3 * SECOND, 2.0) == "ELEVATED"       # elapsed == dwell exactly
+    assert fsm.state == "ELEVATED"
+
+
+def test_unrelated_candidate_evaluation_does_not_disturb_other_dwell_timers():
+    """From ELEVATED, alternate between scores that qualify for neither the
+    SPIKE (above 2.8) nor the NORMAL (below 1.1) candidate. Neither timer
+    should ever start, no transition should fire, and no timer should leak
+    into `_since`.
+    """
+    fsm = RegimeFSM(initial="ELEVATED")
+    for step in range(20):
+        ts = step * SECOND
+        score = 1.5 if step % 2 == 0 else 2.5
+        changed = fsm.update(ts, score)
+        assert changed is None
+    assert fsm.state == "ELEVATED"
+    assert fsm._since == {}
