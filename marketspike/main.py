@@ -6,7 +6,9 @@ from typing import Dict, List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from marketspike.api import ws as ws_api
 from marketspike.config import get_settings
+from marketspike.engine.bus import Bus
 from marketspike.engine.supervisor import supervise
 from marketspike.feeds.binance import BinanceAdapter
 from marketspike.feeds.oanda import OandaAdapter
@@ -30,6 +32,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+app.include_router(ws_api.router)
 
 STATE: Dict[str, object] = {"started_ns": 0, "adapters": {}, "tasks": []}
 
@@ -61,6 +64,9 @@ async def startup() -> None:
     apply_schema(conn)
     recorder = Recorder(conn)
     adapters = build_adapters(settings)
+    STATE["bus"] = Bus()
+    STATE["mode"] = "live"
+    STATE["warmup_complete"] = False
 
     STATE["started_ns"] = time.time_ns()
     STATE["settings"] = settings
@@ -117,4 +123,14 @@ async def shutdown() -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Pass the app by dotted string, not by the `app` object already bound in
+    # this module's `__main__` namespace. `python -m marketspike.main` runs
+    # this file twice under two different sys.modules keys ('__main__' and,
+    # once ws.py's handler does `from marketspike.main import STATE`,
+    # 'marketspike.main' too). Handing uvicorn the string means it does that
+    # second import itself and serves *that* module's app — the same one the
+    # handler's import resolves to — so STATE (with "bus" etc.) lines up.
+    # Passing the local `app` object would instead run the '__main__' copy,
+    # whose STATE never gets startup()-populated, causing a KeyError at
+    # connection time in api/ws.py.
+    uvicorn.run("marketspike.main:app", host="0.0.0.0", port=8000)
