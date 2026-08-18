@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pytest
 
@@ -71,35 +73,95 @@ def test_gradient_descent_pinball_loss_within_two_percent_of_sklearn_lp_solver()
         )
 
 
-def test_unstandardisation_round_trips_to_raw_feature_space():
-    """Fit on data with deliberately mismatched feature scales and check
-    that the returned raw-space coefficients reproduce the same predictions
-    as computing directly in standardized space (spec Task 20) -- a wrong
-    un-standardisation would silently train fine and score garbage at serve
-    time, so this pins the algebra rather than just "it runs".
+def _known_linear_samples(n, seed):
+    """Samples generated from a *known* linear relationship, with two
+    features on deliberately mismatched scales and non-zero means -- one
+    tiny (mean ~1e-3), one large (mean ~1e2) -- mirroring the real
+    log_spread_bps (~-6.5) vs quote_rate_hz (~100) mismatch (spec Task 20,
+    review finding 1).
+
+    Every other feature is pure zero-mean noise with zero true coefficient,
+    so the only way `fit_quantiles` can recover `true_intercept`/`true_coef`
+    on the two informative features is if its raw-space un-standardisation
+    is correct in *both* of the ways it can be wrong:
+
+    - a dropped `/std_safe` on the coefficients is caught because the
+      informative features' stds (~2e-4 and ~25) are far from 1, so the
+      standardized-space weight and the correct raw-space coefficient
+      differ by orders of magnitude;
+    - a dropped `- np.dot(w_std, mean/std_safe)` intercept term is caught
+      only because these two features have a substantial non-zero mean
+      (unlike a feature merely centered near 0 by sampling noise) -- the
+      correction term is ~0.8 and ~1.0 respectively, not negligible.
     """
-    samples = _synthetic_samples(600, seed=7)
+    rng = np.random.default_rng(seed)
+    p = len(FEATURE_ORDER)
+    small_idx = FEATURE_ORDER.index("log_spread_bps")
+    large_idx = FEATURE_ORDER.index("quote_rate_hz")
 
-    matrix = np.array(
-        [[s.features[name] for name in FEATURE_ORDER] for s in samples], dtype=float
-    )
-    mean = matrix.mean(axis=0)
-    std = matrix.std(axis=0)
-    std_safe = np.where(std == 0.0, 1.0, std)
-    standardized = (matrix - mean) / std_safe
+    matrix = rng.normal(size=(n, p))  # other features: mean 0, std 1
+    matrix[:, small_idx] = 1e-3 + rng.normal(scale=2e-4, size=n)
+    matrix[:, large_idx] = 100.0 + rng.normal(scale=25.0, size=n)
 
-    from marketspike.ml.train import _fit_pinball_gd
+    true_intercept = 5.0
+    true_coef = np.zeros(p)
+    true_coef[small_idx] = 800.0
+    true_coef[large_idx] = 0.01
 
-    for tau in (0.5, 0.95):
-        w_std, b_std = _fit_pinball_gd(standardized, np.array([s.cost_bps for s in samples]), tau, alpha=1e-4)
+    # Symmetric, mean/median-zero noise: the pinball-optimal p50 fit under
+    # this noise is exactly true_intercept + matrix @ true_coef, so we can
+    # assert recovery directly rather than just self-consistency.
+    noise = rng.normal(scale=0.05, size=n)
+    target = true_intercept + matrix.dot(true_coef) + noise
+    assert (target > 0).all(), "test fixture must avoid the max(0, ...) clamp"
 
-        coef_raw = w_std / std_safe
-        intercept_raw = float(b_std - np.dot(w_std, mean / std_safe))
+    samples = []
+    for i in range(n):
+        features = {name: float(matrix[i, j]) for j, name in enumerate(FEATURE_ORDER)}
+        samples.append(
+            Sample(
+                t_ns=i, symbol="TEST", features=features, delta_ms=60.0,
+                direction=1, cost_bps=float(target[i]), regime="NORMAL",
+            )
+        )
+    return samples, true_intercept, true_coef
 
-        predictions_standardized = standardized.dot(w_std) + b_std
-        predictions_raw = matrix.dot(coef_raw) + intercept_raw
 
-        assert predictions_raw == pytest.approx(predictions_standardized, abs=1e-8)
+def test_unstandardisation_round_trips_to_raw_feature_space():
+    """Exercise the real `fit_quantiles` un-standardisation path and check
+    that the *returned raw-space* coefficients recover the known linear
+    relationship the data was generated from (spec Task 20, review finding
+    1) -- not a re-derivation of the same formula computed inline, which
+    would hold by construction even if `fit_quantiles`'s un-standardisation
+    were wrong.
+
+    Verified to actually catch a broken un-standardisation: temporarily
+    dropping the `- np.dot(w_std, mean/std_safe)` intercept term, and
+    separately dropping the `/std_safe` division on the coefficients, each
+    make this test fail (see task-20 report for the exact failures).
+    """
+    samples, true_intercept, true_coef = _known_linear_samples(4000, seed=7)
+    small_idx = FEATURE_ORDER.index("log_spread_bps")
+    large_idx = FEATURE_ORDER.index("quote_rate_hz")
+
+    fitted = fit_quantiles(samples)
+
+    # p50 (the median) is the quantile the pinball-GD solver converges on
+    # most precisely in a fixed iteration budget -- the loss surface for
+    # tau=0.95 is lopsided (see `_fit_pinball_gd`'s docstring) and converges
+    # to the true coefficients less tightly, so recovery is checked here at
+    # tau=0.5, where a correct un-standardisation should reproduce the
+    # generating coefficients closely.
+    coef_raw = fitted["p50"]["coefficients"]
+    intercept_raw = fitted["p50"]["intercept"]
+
+    assert coef_raw[small_idx] == pytest.approx(true_coef[small_idx], rel=0.05)
+    assert coef_raw[large_idx] == pytest.approx(true_coef[large_idx], rel=0.05)
+    for idx, name in enumerate(FEATURE_ORDER):
+        if idx in (small_idx, large_idx):
+            continue
+        assert coef_raw[idx] == pytest.approx(0.0, abs=0.05)
+    assert intercept_raw == pytest.approx(true_intercept, abs=0.5)
 
 
 def test_fit_quantiles_return_shape_is_unchanged():
@@ -114,3 +176,44 @@ def test_fit_quantiles_return_shape_is_unchanged():
         assert isinstance(coefficients, list)
         assert len(coefficients) == len(FEATURE_ORDER)
         assert all(isinstance(c, float) for c in coefficients)
+
+
+def test_zero_variance_feature_yields_finite_coefficients_and_zero_weight():
+    """A constant (zero-variance) feature column drives std == 0, which the
+    `std_safe = np.where(std == 0.0, 1.0, std)` guard exists to protect
+    against (spec Task 20, review finding 2) -- without it, standardising
+    that column would divide by zero. Assert the guard actually keeps every
+    returned value finite, and that the constant feature contributes
+    nothing (coefficient 0.0), since it carries no information to fit on.
+    """
+    rng = np.random.default_rng(11)
+    n = 500
+    p = len(FEATURE_ORDER)
+    const_idx = FEATURE_ORDER.index("log_v_ratio")
+
+    matrix = rng.normal(size=(n, p))
+    matrix[:, const_idx] = 3.0  # zero-variance column
+
+    true_coef = rng.normal(size=p) * 0.1
+    true_coef[const_idx] = 0.0
+    noise = rng.normal(scale=0.05, size=n)
+    target = np.maximum(0.0, 2.0 + matrix.dot(true_coef) + noise)
+
+    samples = []
+    for i in range(n):
+        features = {name: float(matrix[i, j]) for j, name in enumerate(FEATURE_ORDER)}
+        samples.append(
+            Sample(
+                t_ns=i, symbol="TEST", features=features, delta_ms=60.0,
+                direction=1, cost_bps=float(target[i]), regime="NORMAL",
+            )
+        )
+
+    fitted = fit_quantiles(samples)
+
+    for label in ("p50", "p95"):
+        intercept = fitted[label]["intercept"]
+        coefficients = fitted[label]["coefficients"]
+        assert math.isfinite(intercept)
+        assert all(math.isfinite(c) for c in coefficients)
+        assert coefficients[const_idx] == 0.0
