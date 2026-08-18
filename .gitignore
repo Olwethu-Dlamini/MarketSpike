@@ -10,3 +10,6 @@ venv/
 .pytest_cache/
 model.json
 scenarios/*.ndjson
+*.egg-info/
+build/
+dist/
