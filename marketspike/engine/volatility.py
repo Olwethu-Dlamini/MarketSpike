@@ -78,7 +78,7 @@ class VolatilityPair:
     interval. This is a CPU optimisation, not a bias correction: the EWMA is
     already unbiased with respect to sampling density, because with
     lam = exp(-dt/tau) each sample's weight is (1 - lam) ~= dt/tau, so a 5ms
-    sample carries ~1.7e-4 of the weight of a 1s one. Replaying 18,100 recorded
+    sample carries about 5e-3 of the weight of a 1s one (tau cancels: 0.005/1). Replaying 18,100 recorded
     BTCUSDT ticks gives fast sigma 4.1709e-05 gated at 1s versus 4.1480e-05
     ungated -- indistinguishable -- while cutting accepted samples from 18,100
     to 258.

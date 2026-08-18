@@ -415,8 +415,8 @@ relative to each other by sampling scale, and mandated a 1-second sampling grid 
 
 The evidence came from an equal-weighted batch mean of `r²/Δt` over recorded ticks, giving
 0.507 against the kline baseline. That statistic is not what the EWMA computes. With
-`λ = exp(−Δt/τ)`, a sample's weight is `(1 − λ) ≈ Δt/τ`, so a 5 ms sample carries roughly
-1.7e-4 of the weight of a 1 s sample. **The EWMA is already a proper time-weighted average,
+`λ = exp(−Δt/τ)`, a sample's weight is `(1 − λ) ≈ Δt/τ`, so a 5 ms sample carries about
+5e-3 of the weight of a 1 s sample (the τ cancels in the ratio: 0.005/1). **The EWMA is already a proper time-weighted average,
 unbiased with respect to sampling density** — which is exactly what the `r²/Δt` normalisation
 in §7.1 achieves. The equal-weighted diagnostic was itself the biased estimator, giving full
 weight to the many sub-millisecond pairs whose returns quantise to zero.
