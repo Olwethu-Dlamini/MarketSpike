@@ -9,6 +9,7 @@ from marketspike.api.schemas import SizeRequest
 from marketspike.feeds.replay import ReplayAdapter, list_scenarios
 from marketspike.risk.instruments import all_instruments, get_instrument
 from marketspike.risk.sizing import SizingContext, size_position
+from marketspike.risk.slippage import FEATURE_ORDER, fallback_model
 
 router = APIRouter(prefix="/api/v1")
 
@@ -288,6 +289,53 @@ def _features(engine, latency_ms: float) -> Dict[str, float]:
     }
 
 
+@router.post("/slippage/predict")
+def slippage_predict(body: Dict[str, Any]) -> Dict[str, Any]:
+    """What-if slippage prediction for explicit market conditions.
+
+    Unlike /size (which reads live engine state via `_features()`), every
+    feature input here comes from the request body, so a client can sweep
+    e.g. latency_ms across a range and draw a cost curve without needing a
+    live symbol feed. Uses whatever model is currently loaded for the
+    symbol (trained if available, else fallback priors) -- the same
+    resolution `/size` uses -- so the curve matches what sizing actually
+    relies on.
+    """
+    symbol = body.get("symbol", "")
+    state = _state()
+    model = state.get("models", {}).get(symbol)
+    if model is None:
+        try:
+            get_instrument(symbol)
+        except KeyError:
+            raise _problem(404, "unknown-symbol", "Unknown symbol",
+                           "{0} is not in the instrument registry".format(symbol),
+                           "/api/v1/slippage/predict")
+        model = fallback_model(symbol)
+
+    features = {name: 0.0 for name in FEATURE_ORDER}
+    features["log_v_ratio"] = math.log(max(float(body.get("v_ratio", 1.0)), 1e-9))
+    features["spread_z"] = float(body.get("spread_z", 0.0))
+    features["log_spread_bps"] = math.log(max(float(body.get("spread_bps", 1.0)), 1e-6))
+    features["log_latency_ms"] = math.log(max(float(body.get("latency_ms", 50.0)), 1e-3))
+    features["quote_rate_hz"] = float(body.get("quote_rate_hz", 0.0))
+    features["book_imbalance"] = float(body.get("book_imbalance", 0.0))
+    features["signed_secs_to_event"] = float(body.get("signed_secs_to_event", 1800.0))
+    features["in_event_window"] = float(body.get("in_event_window", 0.0))
+    features["abs_return_5s"] = float(body.get("abs_return_5s", 0.0))
+
+    predicted = model.predict_quantiles(features)
+    return {
+        "v": 1,
+        "symbol": symbol,
+        "p50_bps": predicted["p50"],
+        "p95_bps": predicted["p95"],
+        "model_source": model.source,
+        "model_version": model.version,
+        "inputs_echo": body,
+    }
+
+
 @router.post("/size")
 def size(request: SizeRequest) -> Dict[str, Any]:
     if request.risk_pct <= 0 or request.risk_pct > 100:
@@ -307,8 +355,6 @@ def size(request: SizeRequest) -> Dict[str, Any]:
     engine = state.get("engines", {}).get(request.symbol)
     model = state.get("models", {}).get(request.symbol)
     if model is None:
-        from marketspike.risk.slippage import fallback_model
-
         model = fallback_model(request.symbol)
 
     tick = engine.last_tick if engine else None
