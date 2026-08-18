@@ -16,7 +16,8 @@ KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 def parse_book_ticker(raw: Dict, recv_ts_ns: int) -> Optional[Tick]:
     data = raw.get("data", raw)
-    if "s" not in data or "b" not in data or "E" not in data:
+    required_keys = ("s", "E", "b", "a", "B", "A")
+    if any(key not in data for key in required_keys):
         return None
     return Tick(
         symbol=data["s"],

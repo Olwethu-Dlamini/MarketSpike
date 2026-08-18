@@ -1,6 +1,7 @@
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import AsyncIterator, List, Optional
+from typing import AsyncIterator, Optional
 
 try:
     from typing import Protocol
@@ -39,18 +40,32 @@ class Tick:
         return 0.0 if total <= 0 else (self.bid_qty - self.ask_qty) / total
 
 
+_OFFSET_RE = re.compile(r"([+-])(\d{2}):(\d{2})$")
+
+
 def rfc3339_to_ns(value: str) -> int:
     """Parse an RFC3339 timestamp to integer nanoseconds.
 
     datetime cannot represent nanoseconds, so the fractional part is handled
-    separately rather than through strptime.
+    separately rather than through strptime. A trailing "Z" or a numeric
+    UTC offset (e.g. "+00:00", "-05:30") is both accepted; the offset is
+    applied to shift the result to UTC.
     """
     text = value.strip()
-    if text.endswith("Z"):
+    offset_seconds = 0
+    if text.endswith("Z") or text.endswith("z"):
         text = text[:-1]
+    else:
+        match = _OFFSET_RE.search(text)
+        if match:
+            sign, hours, minutes = match.groups()
+            offset_seconds = int(hours) * 3600 + int(minutes) * 60
+            if sign == "-":
+                offset_seconds = -offset_seconds
+            text = text[: match.start()]
     head, _, frac = text.partition(".")
     moment = datetime.strptime(head, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-    total = int(moment.timestamp()) * 1_000_000_000
+    total = (int(moment.timestamp()) - offset_seconds) * 1_000_000_000
     if frac:
         total += int(frac.ljust(9, "0")[:9])
     return total
