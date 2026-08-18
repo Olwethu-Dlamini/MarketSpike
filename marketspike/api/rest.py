@@ -140,6 +140,25 @@ def calendar_upcoming(
     }
 
 
+@router.get("/model/card")
+def model_card() -> Dict[str, Any]:
+    state = _state()
+    models = state.get("models", {})
+    return {
+        "v": 1,
+        "models": {
+            symbol: {
+                "version": model.version,
+                "source": model.source,
+                "feature_order": model.feature_order,
+                "coefficients": model.quantiles,
+                "metrics": state.get("model_metrics", {}).get(symbol, {}),
+            }
+            for symbol, model in models.items()
+        },
+    }
+
+
 def _problem(status: int, slug: str, title: str, detail: str, instance: str) -> HTTPException:
     return HTTPException(
         status_code=status,

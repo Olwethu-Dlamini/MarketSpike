@@ -1,7 +1,9 @@
 import asyncio
+import json
 import logging
+import os
 import time
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +64,34 @@ def build_adapters(settings) -> Dict[str, object]:
     return adapters
 
 
+def _load_model_metrics(model_path: str) -> Dict[str, Any]:
+    """Read the per-symbol `metrics` block straight out of model.json.
+
+    `resolve_models`/`load_models` (marketspike.risk.slippage) intentionally
+    strip everything down to the `SlippageModel` shape needed to serve a
+    prediction -- they never carry the evaluation report. `/model/card`
+    needs that report too, so it is read here, separately, rather than by
+    widening the risk-serving path's return type.
+    """
+    if not model_path or not os.path.exists(model_path):
+        return {}
+    try:
+        with open(model_path, "r") as handle:
+            raw = json.load(handle)
+    except (ValueError, OSError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    models_section = raw.get("models")
+    if not isinstance(models_section, dict):
+        return {}
+    return {
+        symbol: entry.get("metrics", {})
+        for symbol, entry in models_section.items()
+        if isinstance(entry, dict)
+    }
+
+
 @app.on_event("startup")
 async def startup() -> None:
     settings = get_settings()
@@ -105,6 +135,7 @@ async def startup() -> None:
     models = resolve_models(settings.model_path, list(adapters.keys()))
     STATE["models"] = models
     STATE["model_sources"] = {s: m.source for s, m in models.items()}
+    STATE["model_metrics"] = _load_model_metrics(settings.model_path)
 
     tasks: List[asyncio.Future] = [
         asyncio.ensure_future(supervise("recorder", recorder.run))
