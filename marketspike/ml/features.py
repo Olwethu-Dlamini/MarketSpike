@@ -82,14 +82,16 @@ def build_sample(
 
     Decomposition: cost_bps = half_spread_bps + direction * drift_bps.
     - half_spread_bps is the cost of crossing the spread, taken at the
-      target (that's the spread actually paid when the order arrives).
+      target (that's the spread actually paid when the order arrives) and
+      rescaled by (target.mid / decision.mid) so it is expressed relative
+      to the decision mid, matching drift_bps below.
     - drift_bps = (target.mid - decision.mid) / decision.mid * 1e4 is the
       market's move over the interval, expressed relative to the decision
       mid (the reference price the trader was looking at).
     Both a buy (+1) and a sell (-1) are scored from the same observation:
     over a horizon of tens to low-hundreds of milliseconds there is no
     directional edge to assume, so summing the two and halving recovers
-    exactly the half-spread term -- that is the invariant
+    exactly the (rescaled) half-spread term -- that is the invariant
     `test_direction_symmetry_recovers_the_half_spread` checks, and it is
     what makes the empirical p50 ~= half-spread result meaningful rather
     than coincidental.
@@ -102,7 +104,13 @@ def build_sample(
             )
         )
 
-    half_spread_bps = target.spread_bps / 2.0
+    # target.spread_bps is expressed relative to the target mid (it is the
+    # spread actually quoted when the order arrives), but cost_bps must be
+    # expressed relative to the decision mid (the arrival price the trader
+    # saw). Multiplying by (target.mid / decision.mid) converts the
+    # half-spread from "bps of target.mid" to "bps of decision.mid" so it
+    # can be added to drift_bps, which is already relative to decision.mid.
+    half_spread_bps = (target.spread_bps / 2.0) * (target.mid / decision.mid)
     drift_bps = (target.mid - decision.mid) / decision.mid * 1e4
     cost_bps = half_spread_bps + direction * drift_bps
 

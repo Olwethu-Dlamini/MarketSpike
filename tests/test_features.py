@@ -55,12 +55,27 @@ def test_flat_market_cost_is_the_half_spread():
 
 
 def test_adverse_drift_raises_cost_for_a_buy_and_lowers_it_for_a_sell():
-    history = [row(1000 * SECOND, 100.0, spread_bps=4.0)]
-    target = row(1000 * SECOND + 50_000_000, 100.1, spread_bps=4.0)  # +10 bps
+    decision_mid = 100.0
+    target_mid = 100.1  # +10 bps drift over the interval
+    target_spread_bps = 4.0
+    history = [row(1000 * SECOND, decision_mid, spread_bps=target_spread_bps)]
+    target = row(1000 * SECOND + 50_000_000, target_mid, spread_bps=target_spread_bps)
     buy = build_sample(history, target, 50.0, 1, CLOCK, "EURUSD")
     sell = build_sample(history, target, 50.0, -1, CLOCK, "EURUSD")
     assert buy.cost_bps > sell.cost_bps
-    assert (buy.cost_bps + sell.cost_bps) / 2 == pytest.approx(2.0, abs=1e-6)
+
+    # Derive the expectation independently from first principles: the
+    # ask/bid are quoted around the target mid using target.spread_bps
+    # (which is relative to target_mid), then each cost is measured
+    # relative to decision_mid (the arrival price actually observed).
+    spread_abs_target = target_spread_bps / 1e4 * target_mid
+    ask_target = target_mid + spread_abs_target / 2.0
+    bid_target = target_mid - spread_abs_target / 2.0
+    cost_buy = (ask_target - decision_mid) / decision_mid * 1e4
+    cost_sell = (decision_mid - bid_target) / decision_mid * 1e4
+    expected_mean = (cost_buy + cost_sell) / 2.0
+
+    assert (buy.cost_bps + sell.cost_bps) / 2 == pytest.approx(expected_mean, abs=1e-6)
 
 
 def test_dataset_emits_both_directions_for_each_decision_point():
@@ -112,7 +127,11 @@ def test_direction_symmetry_recovers_the_half_spread():
             continue
         buy = build_sample([decision], target, delta_ms, 1, CLOCK, "EURUSD")
         sell = build_sample([decision], target, delta_ms, -1, CLOCK, "EURUSD")
-        expected_half_spread = target.spread_bps / 2.0
+
+        # Derive the expectation independently: the half-spread is quoted
+        # relative to target.mid, then rescaled to decision.mid (the
+        # arrival price) so it is comparable to the drift term.
+        expected_half_spread = (target.spread_bps / 2.0) * (target.mid / decision.mid)
         assert (buy.cost_bps + sell.cost_bps) / 2 == pytest.approx(
             expected_half_spread, abs=1e-9
         )
