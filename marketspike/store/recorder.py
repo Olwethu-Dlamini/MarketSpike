@@ -1,9 +1,12 @@
 import asyncio
+import logging
 import sqlite3
 from collections import deque
 from typing import Any, Deque, Dict, List, Tuple
 
 from marketspike.feeds.base import Tick
+
+LOGGER = logging.getLogger(__name__)
 
 TICK_SQL = (
     "INSERT INTO ticks (symbol, venue_ts_ns, recv_ts_ns, bid, ask, bid_qty, "
@@ -35,9 +38,11 @@ class Recorder:
         self._batch_size = batch_size
         self._flush_interval_s = flush_interval_s
         self._queue: Deque[Tuple[str, Tuple[Any, ...]]] = deque()
+        self._lock = asyncio.Lock()
         self.counters: Dict[str, int] = {
             "recorder_dropped_total": 0,
             "recorder_written_total": 0,
+            "recorder_write_failed_total": 0,
         }
 
     def _submit(self, kind: str, params: Tuple[Any, ...]) -> bool:
@@ -88,16 +93,30 @@ class Recorder:
         return written
 
     async def flush_once(self) -> int:
-        if not self._queue:
-            return 0
-        batch = self._drain_batch()
-        loop = asyncio.get_event_loop()
-        written = await loop.run_in_executor(None, self._write, batch)
-        self.counters["recorder_written_total"] += written
-        return written
+        async with self._lock:
+            if not self._queue:
+                return 0
+            batch = self._drain_batch()
+            batch_len = sum(len(rows) for rows in batch.values())
+            loop = asyncio.get_event_loop()
+            try:
+                written = await loop.run_in_executor(None, self._write, batch)
+            except Exception:
+                LOGGER.exception(
+                    "recorder write failed; dropping %d rows", batch_len
+                )
+                self.counters["recorder_write_failed_total"] += batch_len
+                return 0
+            self.counters["recorder_written_total"] += written
+            return written
 
     async def run(self) -> None:
         while True:
             await asyncio.sleep(self._flush_interval_s)
-            while self._queue:
-                await self.flush_once()
+            try:
+                while self._queue:
+                    await self.flush_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception("recorder run() loop encountered an error")
