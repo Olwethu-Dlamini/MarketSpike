@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "type": "clock_sync_reply",
+  "seq": 8,
+  "server_ts_ns": 1723891200700000000,
+  "client_send_ns": 1723891200123456789,
+  "server_recv_ns": 1723891200141902311,
+  "server_send_ns": 1723891200141998042
+}

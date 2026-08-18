@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "type": "error",
+  "seq": 9,
+  "server_ts_ns": 1723891200800000000,
+  "code": "UNKNOWN_SYMBOL",
+  "detail": "GBPJPY is not in the instrument registry"
+}

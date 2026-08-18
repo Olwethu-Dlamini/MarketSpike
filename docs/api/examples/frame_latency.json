@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "latency",
+  "seq": 3,
+  "server_ts_ns": 1723891200200000000,
+  "symbol": "EURUSD",
+  "excess_transit_us": 4100,
+  "engine_us": 180,
+  "delivery_us": 19400,
+  "p50_us": 21000,
+  "p95_us": 68000,
+  "p99_us": 141000,
+  "source": "estimated",
+  "baseline_includes_clock_offset": true
+}

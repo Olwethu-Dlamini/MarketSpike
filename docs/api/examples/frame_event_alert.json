@@ -1,0 +1,15 @@
+{
+  "v": 1,
+  "type": "event_alert",
+  "seq": 5,
+  "server_ts_ns": 1723891200400000000,
+  "name": "US CPI (YoY)",
+  "importance": "high",
+  "event_ts_ns": 1723891800000000000,
+  "seconds_until": 1800,
+  "phase": "PRE_EVENT",
+  "affects": [
+    "EURUSD",
+    "BTCUSDT"
+  ]
+}

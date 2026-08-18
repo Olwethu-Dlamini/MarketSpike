@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "market_state",
+  "seq": 6,
+  "server_ts_ns": 1723891200500000000,
+  "symbol": "EURUSD",
+  "tradeable": false,
+  "reason": "market_closed",
+  "next_open_ts_ns": 1723921200000000000
+}

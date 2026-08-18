@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "regime_change",
+  "seq": 4,
+  "server_ts_ns": 1723891200300000000,
+  "symbol": "EURUSD",
+  "from": "ELEVATED",
+  "to": "SPIKE",
+  "score": 3.1,
+  "v_ratio": 4.8,
+  "spread_z": 6.2,
+  "event_context": "EVENT_WINDOW",
+  "trigger": "vol_ratio"
+}

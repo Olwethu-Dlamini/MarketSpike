@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "type": "replay_state",
+  "seq": 7,
+  "server_ts_ns": 1723891200600000000,
+  "mode": "replay",
+  "scenario": "cpi_2026_07_11",
+  "progress_pct": 34.2,
+  "source": "simulated"
+}

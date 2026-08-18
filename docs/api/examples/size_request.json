@@ -1,0 +1,11 @@
+{
+  "symbol": "EURUSD",
+  "account_balance_minor": 1000000,
+  "account_ccy": "USD",
+  "risk_pct": 1.0,
+  "stop_distance_price": 0.002,
+  "direction": "buy",
+  "quantile": "p95",
+  "free_margin_minor": 1000000,
+  "assumed_latency_ms": null
+}

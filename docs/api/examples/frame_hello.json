@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "type": "hello",
+  "seq": 1,
+  "server_ts_ns": 1723891200000000000,
+  "session_id": "a1b2",
+  "server_version": "1.0.0",
+  "warmup_complete": false,
+  "feeds": {
+    "BTCUSDT": "binance",
+    "EURUSD": "oanda"
+  },
+  "mode": "live"
+}

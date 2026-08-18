@@ -1,0 +1,33 @@
+{
+  "naive_lot_size": 0.5,
+  "recommended_lot_size": 0.38,
+  "overexposure_pct": 31.6,
+  "slippage_p50_pips": 1.4,
+  "slippage_p95_pips": 6.2,
+  "stop_distance_pips": 20.0,
+  "effective_adverse_pips": 26.2,
+  "actual_risk_amount_minor": 9956,
+  "actual_risk_pct": 0.9956,
+  "required_margin_minor": 137296,
+  "capped_by": null,
+  "fx_assumed": false,
+  "stale_quote": false,
+  "model_source": "trained",
+  "model_version": "eurusd-2026-08-17T04:12Z",
+  "regime_at_calc": "SPIKE",
+  "event_context": "EVENT_WINDOW",
+  "latency_used_ms": 63.2,
+  "latency_source": "measured",
+  "warnings": [],
+  "inputs_echo": {
+    "symbol": "EURUSD",
+    "account_balance_minor": 1000000,
+    "account_ccy": "USD",
+    "risk_pct": 1.0,
+    "stop_distance_price": 0.002,
+    "direction": "buy",
+    "quantile": "p95",
+    "free_margin_minor": 1000000,
+    "assumed_latency_ms": null
+  }
+}
