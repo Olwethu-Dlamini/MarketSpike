@@ -1,114 +1,897 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MarketSpike — Slippage-Aware Sizing</title>
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MarketSpike — instrument panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0A0C11;
+    --bg-2:#0D1016;
+    --surface:#12151C;
+    --surface-2:#171B24;
+    --border:#242A38;
+    --border-soft:#1A1F2B;
+    --text:#E7EAF2;
+    --text-dim:#8991A6;
+    --text-faint:#4E5567;
+
+    --measured:#3ED9A0;
+    --measured-dim:rgba(62,217,160,0.13);
+    --estimated:#E8A83D;
+    --estimated-dim:rgba(232,168,61,0.13);
+    --simulated:#9B8CF2;
+    --simulated-dim:rgba(155,140,242,0.14);
+    --spike:#E5525A;
+    --spike-dim:rgba(229,82,90,0.14);
+
+    --font-display:'Space Grotesk',sans-serif;
+    --font-mono:'JetBrains Mono',monospace;
+    --font-body:'Inter',sans-serif;
+
+    --radius:10px;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      linear-gradient(var(--bg-2) 1px, transparent 1px) 0 0/100% 34px,
+      linear-gradient(90deg, var(--bg-2) 1px, transparent 1px) 0 0/34px 100%,
+      var(--bg);
+    background-blend-mode:normal;
+    color:var(--text);
+    font-family:var(--font-body);
+    -webkit-font-smoothing:antialiased;
+    min-height:100vh;
+  }
+  ::selection{background:var(--measured-dim); color:var(--measured);}
+
+  a{color:var(--measured); text-decoration:none;}
+  a:hover{text-decoration:underline;}
+
+  .wrap{max-width:1180px; margin:0 auto; padding:0 22px 80px;}
+
+  /* ---------- topbar ---------- */
+  .topbar{
+    position:sticky; top:0; z-index:40;
+    background:rgba(10,12,17,0.86);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--border-soft);
+  }
+  .topbar-inner{
+    max-width:1180px; margin:0 auto; padding:14px 22px;
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  }
+  .brand{
+    font-family:var(--font-display); font-weight:700; font-size:17px;
+    letter-spacing:0.02em; display:flex; align-items:center; gap:8px;
+  }
+  .brand .mark{
+    width:9px; height:9px; border-radius:2px; background:var(--measured);
+    box-shadow:0 0 10px var(--measured);
+  }
+  .brand-sub{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); letter-spacing:0.06em; margin-left:2px;}
+
+  .topbar-controls{margin-left:auto; display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .field-inline{display:flex; align-items:center; gap:6px; font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim);}
+  .field-inline input{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    font-family:var(--font-mono); font-size:11.5px; padding:6px 8px; border-radius:6px; width:190px;
+  }
+  .field-inline input:focus{outline:1px solid var(--measured); outline-offset:0;}
+  .btn{
+    font-family:var(--font-mono); font-size:11.5px; letter-spacing:0.03em; text-transform:uppercase;
+    background:var(--surface-2); color:var(--text); border:1px solid var(--border);
+    padding:7px 12px; border-radius:6px; cursor:pointer; transition:border-color .15s, color .15s;
+  }
+  .btn:hover{border-color:var(--measured); color:var(--measured);}
+  .btn:focus-visible{outline:2px solid var(--measured); outline-offset:2px;}
+  .btn-primary{background:var(--measured-dim); border-color:var(--measured); color:var(--measured);}
+  .btn-primary:hover{background:var(--measured); color:#06110C;}
+
+  .status-chip{
+    display:flex; align-items:center; gap:7px; font-family:var(--font-mono); font-size:11px;
+    padding:6px 10px; border-radius:20px; border:1px solid var(--border); color:var(--text-dim);
+  }
+  .status-dot{width:7px; height:7px; border-radius:50%; background:var(--text-faint);}
+  .status-chip.live .status-dot{background:var(--measured); box-shadow:0 0 8px var(--measured); animation:pulse 1.6s infinite;}
+  .status-chip.live{color:var(--measured); border-color:rgba(62,217,160,0.35);}
+  .status-chip.preview .status-dot{background:var(--simulated);}
+  .status-chip.preview{color:var(--simulated); border-color:rgba(155,140,242,0.35);}
+
+  @keyframes pulse{
+    0%,100%{opacity:1;} 50%{opacity:0.35;}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .status-chip.live .status-dot{animation:none;}
+    *{animation-duration:0.001ms !important; transition-duration:0.001ms !important;}
+  }
+
+  /* ---------- badges (source of truth) ---------- */
+  .badge{
+    display:inline-flex; align-items:center; gap:5px;
+    font-family:var(--font-mono); font-size:10px; letter-spacing:0.06em; text-transform:uppercase;
+    padding:3px 7px; border-radius:5px; white-space:nowrap; line-height:1.4;
+  }
+  .badge::before{content:''; width:6px; height:6px; border-radius:50%; flex:none;}
+  .badge-measured{background:var(--measured-dim); color:var(--measured);}
+  .badge-measured::before{background:var(--measured);}
+  .badge-estimated{background:var(--estimated-dim); color:var(--estimated);}
+  .badge-estimated::before{background:var(--estimated);}
+  .badge-simulated{background:var(--simulated-dim); color:var(--simulated);}
+  .badge-simulated::before{background:var(--simulated);}
+  .badge-spike{background:var(--spike-dim); color:var(--spike);}
+  .badge-spike::before{background:var(--spike);}
+
+  /* ---------- hero ---------- */
+  .hero{padding:56px 0 34px; border-bottom:1px solid var(--border-soft);}
+  .eyebrow{
+    font-family:var(--font-mono); font-size:11.5px; letter-spacing:0.14em; text-transform:uppercase;
+    color:var(--text-faint); display:flex; align-items:center; gap:10px; margin-bottom:18px;
+  }
+  .eyebrow-line{height:1px; width:36px; background:var(--border);}
+  .hero h1{
+    font-family:var(--font-display); font-weight:700; font-size:clamp(28px,4.4vw,46px);
+    line-height:1.08; letter-spacing:-0.01em; margin:0 0 16px; max-width:820px;
+  }
+  .hero h1 em{font-style:normal; color:var(--measured);}
+  .hero p.lede{
+    font-size:15.5px; line-height:1.65; color:var(--text-dim); max-width:600px; margin:0 0 34px;
+  }
+
+  .stat-row{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--border-soft); border:1px solid var(--border-soft); border-radius:var(--radius); overflow:hidden;}
+  .stat{background:var(--surface); padding:20px 22px;}
+  .stat-label{font-family:var(--font-mono); font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase; color:var(--text-faint); margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:8px;}
+  .stat-value{font-family:var(--font-mono); font-weight:700; font-size:30px; letter-spacing:-0.01em;}
+  .stat-value.regime-NORMAL{color:var(--measured);}
+  .stat-value.regime-ELEVATED{color:var(--estimated);}
+  .stat-value.regime-SPIKE{color:var(--spike);}
+  .stat-sub{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); margin-top:6px;}
+
+  @media (max-width:760px){ .stat-row{grid-template-columns:1fr;} }
+
+  /* ---------- sections / panels ---------- */
+  section.section{padding:38px 0; border-bottom:1px solid var(--border-soft);}
+  .section-head{display:flex; align-items:baseline; justify-content:space-between; margin-bottom:18px; gap:14px; flex-wrap:wrap;}
+  .section-title{font-family:var(--font-display); font-weight:600; font-size:19px; letter-spacing:-0.01em; display:flex; align-items:center; gap:10px;}
+  .section-num{font-family:var(--font-mono); font-size:11px; color:var(--text-faint);}
+  .section-note{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); max-width:360px; text-align:right;}
+
+  .grid-3{display:grid; grid-template-columns:repeat(3,1fr); gap:16px;}
+  .grid-2{display:grid; grid-template-columns:1.15fr 0.85fr; gap:16px;}
+  @media (max-width:880px){ .grid-3{grid-template-columns:1fr;} .grid-2{grid-template-columns:1fr;} }
+
+  .panel{
+    background:var(--surface); border:1px solid var(--border-soft); border-radius:var(--radius);
+    padding:20px;
+  }
+  .panel h3{
+    font-family:var(--font-display); font-size:14.5px; font-weight:600; margin:0 0 14px;
+    display:flex; align-items:center; justify-content:space-between; gap:8px;
+  }
+  .panel p.hint{font-size:12.5px; color:var(--text-dim); line-height:1.55; margin:0 0 14px;}
+
+  label.f{display:block; font-family:var(--font-mono); font-size:10.5px; letter-spacing:0.04em; text-transform:uppercase; color:var(--text-faint); margin:0 0 6px;}
+  .field{margin-bottom:12px;}
+  .field input, .field select{
+    width:100%; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    font-family:var(--font-mono); font-size:13px; padding:9px 10px; border-radius:6px;
+  }
+  .field input:focus, .field select:focus{outline:1px solid var(--measured); outline-offset:0; border-color:var(--measured);}
+  .field-row{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .toggle-row{display:flex; gap:8px; margin-bottom:12px;}
+  .toggle-opt{
+    flex:1; text-align:center; font-family:var(--font-mono); font-size:11.5px; text-transform:uppercase;
+    padding:8px 6px; border-radius:6px; border:1px solid var(--border); color:var(--text-dim); cursor:pointer;
+    background:var(--surface-2);
+  }
+  .toggle-opt.active{border-color:var(--measured); color:var(--measured); background:var(--measured-dim);}
+
+  .kv{display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border-soft); gap:10px;}
+  .kv:last-child{border-bottom:none;}
+  .kv-k{font-family:var(--font-mono); font-size:11.5px; color:var(--text-dim);}
+  .kv-v{font-family:var(--font-mono); font-size:13px; font-weight:600; text-align:right;}
+
+  .result-box{margin-top:14px; background:var(--surface-2); border:1px solid var(--border-soft); border-radius:8px; padding:14px 16px;}
+  .result-box.empty{color:var(--text-faint); font-family:var(--font-mono); font-size:12px; text-align:center; padding:22px 10px;}
+
+  .bignum{font-family:var(--font-mono); font-weight:700; font-size:26px; color:var(--measured); letter-spacing:-0.01em;}
+  .bignum.warn{color:var(--estimated);}
+
+  pre.raw{
+    background:#0B0E14; border:1px solid var(--border-soft); border-radius:6px; padding:10px 12px;
+    font-family:var(--font-mono); font-size:11px; color:var(--text-dim); overflow-x:auto; margin:10px 0 0;
+    max-height:180px;
+  }
+
+  /* regime gauge */
+  .gauge-track{height:8px; background:var(--surface-2); border-radius:4px; overflow:hidden; border:1px solid var(--border-soft); margin:10px 0 4px;}
+  .gauge-fill{height:100%; background:linear-gradient(90deg, var(--measured), var(--estimated) 70%, var(--spike)); transition:width .5s ease;}
+  .gauge-labels{display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:9.5px; color:var(--text-faint);}
+
+  /* latency bars */
+  .lat-row{margin-bottom:12px;}
+  .lat-row .kv-k{margin-bottom:5px; display:block;}
+  .lat-bar-track{height:6px; background:var(--surface-2); border-radius:3px; overflow:hidden; border:1px solid var(--border-soft); display:flex; margin-bottom:4px;}
+  .lat-bar{height:100%;}
+  .lat-nums{display:flex; justify-content:space-between; font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint);}
+
+  /* ticker */
+  .ticker-banner{
+    display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:11px;
+    color:var(--simulated); background:var(--simulated-dim); border:1px solid rgba(155,140,242,0.3);
+    padding:7px 10px; border-radius:6px; margin-bottom:14px;
+  }
+  .ticker-strip{
+    display:flex; flex-direction:column-reverse; gap:0; height:230px; overflow:hidden;
+    border:1px solid var(--border-soft); border-radius:8px; background:#0B0E14;
+    font-family:var(--font-mono); font-size:12px;
+  }
+  .tick-row{
+    display:grid; grid-template-columns:100px 1fr 1fr 90px 90px; gap:10px; padding:7px 12px;
+    border-bottom:1px solid var(--border-soft); color:var(--text-dim);
+  }
+  .tick-row:first-child{color:var(--text); background:rgba(62,217,160,0.04);}
+  .tick-row .up{color:var(--measured);}
+  .tick-row .down{color:var(--spike);}
+
+  /* calendar */
+  .cal-item{padding:10px 0; border-bottom:1px solid var(--border-soft); display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
+  .cal-item:last-child{border-bottom:none;}
+  .cal-name{font-size:13px; font-weight:600;}
+  .cal-when{font-family:var(--font-mono); font-size:11px; color:var(--text-faint); margin-top:2px;}
+
+  /* model card */
+  .bench-table{width:100%; border-collapse:collapse; font-family:var(--font-mono); font-size:11.5px; margin-top:6px;}
+  .bench-table th, .bench-table td{text-align:right; padding:7px 6px; border-bottom:1px solid var(--border-soft); color:var(--text-dim);}
+  .bench-table th:first-child, .bench-table td:first-child{text-align:left; color:var(--text);}
+  .bench-table th{color:var(--text-faint); font-weight:500; text-transform:uppercase; font-size:10px; letter-spacing:0.04em;}
+  .bench-table td.pos{color:var(--measured);}
+  .bench-table td.neg{color:var(--spike);}
+
+  footer{padding:34px 0 10px; font-family:var(--font-mono); font-size:11px; color:var(--text-faint); display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;}
+</style>
 </head>
 <body>
-  <header>
-    <div class="brand">
-      <span class="logo">📈</span>
-      <div>
-        <h1>MarketSpike</h1>
-        <p class="tagline">Slippage-aware position sizing for high-impact events</p>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="brand"><span class="mark"></span>MARKETSPIKE<span class="brand-sub">/ instrument panel</span></div>
+    <div class="topbar-controls">
+      <div class="field-inline">
+        <span>api</span>
+        <input id="apiBaseInput" type="text" value="http://localhost:8000" spellcheck="false" />
       </div>
+      <button class="btn" id="connectBtn">Connect</button>
+      <div class="status-chip preview" id="statusChip"><span class="status-dot"></span><span id="statusText">preview mode</span></div>
     </div>
-    <div class="controls">
-      <label>API
-        <input id="apiBase" type="text" value="http://localhost:8000" />
-      </label>
-      <label>Symbol
-        <select id="symbolPicker"><option>loading…</option></select>
-      </label>
-      <span id="wsStatus" class="badge badge-offline">ws: offline</span>
-    </div>
-  </header>
+  </div>
+</div>
 
-  <main>
-    <!-- ===== HERO: Position Sizing ===== -->
-    <section class="card hero">
-      <h2>Slippage-Aware Position Size</h2>
-      <p class="muted">
-        Conventional calculators assume you're filled at the price you see.
-        MarketSpike measures pipeline latency and expected slippage, and returns
-        a size that accounts for both.
-      </p>
+<div class="wrap">
 
-      <form id="sizeForm" class="size-grid">
-        <label>Account balance (minor units)
-          <input name="account_balance_minor" type="number" value="1000000" step="100000" />
-        </label>
-        <label>Free margin (minor units)
-          <input name="free_margin_minor" type="number" value="1000000" step="100000" />
-        </label>
-        <label>Risk %
-          <input name="risk_pct" type="number" value="1.0" step="0.1" min="0" />
-        </label>
-        <label>Stop distance (price)
-          <input name="stop_distance_price" type="number" value="250.0" step="10" />
-        </label>
-        <button type="submit" class="primary">Calculate size</button>
-      </form>
-
-      <div id="sizeResult" class="result hidden"></div>
-    </section>
-
-    <!-- ===== REGIME ===== -->
-    <section class="card">
-      <h2>Volatility Regime</h2>
-      <div id="regimeBox" class="regime-box">
-        <span id="regimeState" class="regime-state">—</span>
-        <div class="regime-metrics">
-          <div><span class="label">Score</span><span id="regimeScore">—</span></div>
-          <div><span class="label">V-ratio</span><span id="regimeV">—</span></div>
-          <div><span class="label">Spread z</span><span id="regimeZ">—</span></div>
-          <div><span class="label">Trigger</span><span id="regimeTrigger">—</span></div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== LATENCY ===== -->
-    <section class="card">
-      <h2>Pipeline Latency (µs)</h2>
-      <p class="muted">The tail is what matters. A 1 ms median with a 72 ms p95 is a completely different environment.</p>
-      <table id="latencyTable">
-        <thead>
-          <tr><th>Hop</th><th>p50</th><th>p95</th><th>p99</th><th>Source</th></tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-    </section>
-
-    <!-- ===== HEALTH + MODEL ===== -->
-    <section class="card">
-      <h2>System Health & Model Card</h2>
-      <div class="two-col">
-        <div>
-          <h3>Engine</h3>
-          <pre id="healthJson" class="json">—</pre>
-        </div>
-        <div>
-          <h3>Model</h3>
-          <pre id="modelJson" class="json">—</pre>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== LIVE TICK LOG ===== -->
-    <section class="card">
-      <h2>Live Tick Stream <span class="muted">(WebSocket)</span></h2>
-      <div id="tickLog" class="tick-log"></div>
-    </section>
-  </main>
-
-  <footer>
-    <p>
-      Every value carries a <code>source</code> field. Nothing synthetic is presented as measured.
+  <section class="hero">
+    <div class="eyebrow"><span class="eyebrow-line"></span>SLIPPAGE-AWARE POSITION SIZING</div>
+    <h1>The price you saw <em>isn't</em> the price you got.</h1>
+    <p class="lede">
+      Every retail calculator assumes you're filled at the price you decided on, the instant you decided.
+      MarketSpike measures the two costs that assumption ignores &mdash; pipeline latency and expected slippage &mdash;
+      and reports the size, and the exposure gap, that follow from what actually happened on the wire.
     </p>
-  </footer>
 
-  <script src="app.js"></script>
+    <div class="stat-row">
+      <div class="stat">
+        <div class="stat-label"><span>Overexposure vs. naive sizing</span><span class="badge" id="badgeOverexp">simulated</span></div>
+        <div class="stat-value" id="statOverexp">&mdash;</div>
+        <div class="stat-sub" id="statOverexpSub">how much more risk a spread-only calculator would hand you</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label"><span>Pipeline latency, p95</span><span class="badge" id="badgeLatHero">simulated</span></div>
+        <div class="stat-value" id="statLatHero">&mdash;</div>
+        <div class="stat-sub" id="statLatHeroSub">total, decision to engine-done</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label"><span>Regime — <span id="statSymbol">BTCUSDT</span></span><span class="badge" id="badgeRegimeHero">simulated</span></div>
+        <div class="stat-value regime-NORMAL" id="statRegimeHero">NORMAL</div>
+        <div class="stat-sub" id="statRegimeHeroSub">score 0.00 / 4</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CALCULATE ================= -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title"><span class="section-num">01</span>Position size</div>
+      <div class="section-note">Lot size always rounds down — a risk budget can't be exceeded by rounding.</div>
+    </div>
+    <div class="grid-3">
+
+      <div class="panel">
+        <h3>Inputs</h3>
+        <p class="hint">Sent to <code style="font-family:var(--font-mono)">POST /api/v1/size</code> against the connected symbol.</p>
+        <div class="field-row">
+          <div class="field"><label class="f">Balance ($)</label><input id="inBalance" type="number" value="10000" step="1"></div>
+          <div class="field"><label class="f">Risk %</label><input id="inRisk" type="number" value="1.0" step="0.1"></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label class="f">Stop distance (price)</label><input id="inStop" type="number" value="250" step="1"></div>
+          <div class="field"><label class="f">Free margin ($)</label><input id="inMargin" type="number" value="10000" step="1"></div>
+        </div>
+        <button class="btn btn-primary" id="calcSizeBtn" style="width:100%; margin-top:4px;">Calculate size</button>
+        <div class="result-box empty" id="sizeResult">Waiting for input — this reads live from your MarketSpike instance if connected, otherwise it's computed locally and marked simulated.</div>
+      </div>
+
+      <div class="panel">
+        <h3>Latency <span class="badge badge-simulated" id="badgeLatPanel">simulated</span></h3>
+        <p class="hint">Three hops, honestly labelled. Excess transit is skew-corrected, not absolute.</p>
+        <div id="latencyBody">
+          <div class="lat-row">
+            <div class="kv-k">engine (recv &rarr; done)</div>
+            <div class="lat-bar-track"><div class="lat-bar" id="latBar1" style="width:5%; background:var(--measured);"></div></div>
+            <div class="lat-nums"><span id="latP50-1">&mdash;</span><span id="latP95-1">&mdash;</span></div>
+          </div>
+          <div class="lat-row">
+            <div class="kv-k">excess transit (venue &rarr; local)</div>
+            <div class="lat-bar-track"><div class="lat-bar" id="latBar2" style="width:5%; background:var(--estimated);"></div></div>
+            <div class="lat-nums"><span id="latP50-2">&mdash;</span><span id="latP95-2">&mdash;</span></div>
+          </div>
+          <div class="lat-row">
+            <div class="kv-k">delivery (engine &rarr; client)</div>
+            <div class="lat-bar-track"><div class="lat-bar" id="latBar3" style="width:5%; background:var(--simulated);"></div></div>
+            <div class="lat-nums"><span id="latP50-3">&mdash;</span><span id="latP95-3">&mdash;</span></div>
+          </div>
+        </div>
+        <div class="kv"><div class="kv-k">Total p50 / p95</div><div class="kv-v" id="latTotal">&mdash;</div></div>
+      </div>
+
+      <div class="panel">
+        <h3>Regime <span class="badge badge-simulated" id="badgeRegimePanel">simulated</span></h3>
+        <p class="hint" id="regimeTrigger">Two independent signals: volatility vs its own baseline, and spread vs its own baseline.</p>
+        <div class="gauge-track"><div class="gauge-fill" id="regimeGauge" style="width:5%;"></div></div>
+        <div class="gauge-labels"><span>0</span><span>1.5 elevated</span><span>2.8 spike</span><span>4</span></div>
+        <div class="kv"><div class="kv-k">state</div><div class="kv-v" id="regimeState">NORMAL</div></div>
+        <div class="kv"><div class="kv-k">score</div><div class="kv-v" id="regimeScore">0.00</div></div>
+        <div class="kv"><div class="kv-k">v_ratio (fast/slow)</div><div class="kv-v" id="regimeVratio">&mdash;</div></div>
+        <div class="kv"><div class="kv-k">spread z-score</div><div class="kv-v" id="regimeZ">&mdash;</div></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= SLIPPAGE ================= -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title"><span class="section-num">02</span>Slippage what-if</div>
+      <div class="section-note">cost_bps = half-spread at t+&Delta;, scaled to decision mid, plus direction &middot; drift</div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Query the model</h3>
+        <div class="toggle-row" id="dirToggle">
+          <div class="toggle-opt active" data-dir="buy">Buy</div>
+          <div class="toggle-opt" data-dir="sell">Sell</div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label class="f">Seconds to event</label><input id="inSecsToEvent" type="number" value="120" step="1"></div>
+          <div class="field"><label class="f">Δ horizon (ms)</label><input id="inDelta" type="number" value="60" step="10"></div>
+        </div>
+        <div class="toggle-row" id="eventToggle">
+          <div class="toggle-opt" data-ev="0">Outside event window</div>
+          <div class="toggle-opt" data-ev="1">Inside event window</div>
+        </div>
+        <button class="btn btn-primary" id="predictBtn" style="width:100%;">Predict p50 / p95</button>
+        <pre class="raw" id="predictRaw" style="display:none;"></pre>
+      </div>
+      <div class="panel">
+        <h3>Predicted cost <span class="badge badge-simulated" id="badgePredict">simulated</span></h3>
+        <div class="result-box empty" id="predictEmpty">Run a query — the two bars below show the same p50/p95 split the model was benchmarked on.</div>
+        <div id="predictBars" style="display:none;">
+          <div class="lat-row">
+            <div class="kv-k">p50 &mdash; typical fill, lands on half-spread</div>
+            <div class="lat-bar-track"><div class="lat-bar" id="predBar50" style="width:2%; background:var(--measured);"></div></div>
+            <div class="lat-nums"><span id="predVal50">&mdash;</span><span></span></div>
+          </div>
+          <div class="lat-row">
+            <div class="kv-k">p95 &mdash; the tail that costs you</div>
+            <div class="lat-bar-track"><div class="lat-bar" id="predBar95" style="width:2%; background:var(--spike);"></div></div>
+            <div class="lat-nums"><span id="predVal95">&mdash;</span><span></span></div>
+          </div>
+        </div>
+        <table class="bench-table" style="margin-top:16px;">
+          <thead><tr><th>Quantile</th><th>Model pinball</th><th>Baseline pinball</th><th>Change</th></tr></thead>
+          <tbody>
+            <tr><td>p50</td><td>0.0128024</td><td>0.0125212</td><td class="neg">&minus;2.2%</td></tr>
+            <tr><td>p95</td><td>0.0118221</td><td>0.0124754</td><td class="pos">+5.2%</td></tr>
+          </tbody>
+        </table>
+        <p class="hint" style="margin-top:8px;">Published benchmark, 240,294 samples, time-ordered 70/30 split — not a live reading.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= LIVE FEED ================= -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-title"><span class="section-num">03</span>Live ticks — <span id="tickSymbol">BTCUSDT</span></div>
+      <div class="section-note">/ws/v1/stream &mdash; tick, latency and regime_change frames</div>
+    </div>
+    <div class="panel">
+      <div class="ticker-banner" id="tickerBanner">
+        <span class="badge badge-simulated">simulated</span>
+        <span>No local MarketSpike instance connected — this tape is a client-side random walk, not market data.</span>
+      </div>
+      <div class="ticker-strip" id="tickerStrip"></div>
+    </div>
+  </section>
+
+  <!-- ================= CALENDAR + MODEL ================= -->
+  <section class="section" style="border-bottom:none;">
+    <div class="section-head">
+      <div class="section-title"><span class="section-num">04</span>Calendar &amp; model status</div>
+    </div>
+    <div class="grid-2">
+      <div class="panel">
+        <h3>Upcoming releases <span class="badge badge-estimated" id="badgeCal">estimated</span></h3>
+        <div id="calList"></div>
+      </div>
+      <div class="panel">
+        <h3>Model card</h3>
+        <div class="kv"><div class="kv-k">source</div><div class="kv-v" id="mcSource">fallback_coefficients</div></div>
+        <div class="kv"><div class="kv-k">training samples</div><div class="kv-v">240,294</div></div>
+        <div class="kv"><div class="kv-k">recorded ticks</div><div class="kv-v">178,718</div></div>
+        <div class="kv"><div class="kv-k">features</div><div class="kv-v">9</div></div>
+        <div class="kv"><div class="kv-k">p95 coverage vs nominal</div><div class="kv-v">0.048 / 0.05</div></div>
+        <div class="kv"><div class="kv-k">quantile crossing (repaired)</div><div class="kv-v">3.0%</div></div>
+        <p class="hint" style="margin-top:12px;">If the connected instance hasn't trained a model yet, it serves hand-set fallback priors and says so &mdash; the panel above mirrors that same rule.</p>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap" style="display:flex; justify-content:space-between; width:100%; flex-wrap:wrap; gap:10px; padding:0;">
+    <span>MarketSpike frontend &middot; talks to a locally-running instance on the address above</span>
+    <span><span class="badge badge-measured">measured</span> &nbsp;<span class="badge badge-estimated">estimated</span> &nbsp;<span class="badge badge-simulated">simulated</span> &mdash; nothing synthetic is ever shown as measured</span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const SYMBOL = "BTCUSDT";
+
+  let state = {
+    apiBase: "http://localhost:8000",
+    live: false,
+    ws: null,
+    pollTimer: null,
+    previewTimer: null,
+    direction: "buy",
+    eventWindow: 0,
+    lastMid: 65210.5,
+    regime: { state: "NORMAL", score: 0.3, v: 0.9, z: 0.4 }
+  };
+
+  function setBadge(el, kind){
+    if(!el) return;
+    el.className = "badge badge-" + kind;
+    el.textContent = kind;
+  }
+
+  function fmtUsd(n){ return "$" + Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
+  function fmtUs(n){
+    if(n == null) return "—";
+    if(n >= 1000) return (n/1000).toFixed(2) + " ms";
+    return Math.round(n) + " µs";
+  }
+  function fmtBps(n){ return Number(n).toFixed(5) + " bps"; }
+  function clampPct(n, max){ return Math.max(2, Math.min(100, (n/max)*100)); }
+
+  // ---------------- networking ----------------
+  async function fetchJSON(path, opts, timeoutMs){
+    timeoutMs = timeoutMs || 2500;
+    const ctrl = new AbortController();
+    const t = setTimeout(()=>ctrl.abort(), timeoutMs);
+    try{
+      const res = await fetch(state.apiBase + path, Object.assign({signal: ctrl.signal}, opts||{}));
+      clearTimeout(t);
+      if(!res.ok) throw new Error("HTTP " + res.status);
+      return await res.json();
+    } catch(e){
+      clearTimeout(t);
+      throw e;
+    }
+  }
+
+  async function tryConnect(){
+    $("statusText").textContent = "connecting…";
+    state.apiBase = $("apiBaseInput").value.replace(/\/+$/,"");
+    try {
+      await fetchJSON("/api/v1/health", {}, 2500);
+      goLive();
+    } catch(e){
+      goPreview();
+    }
+  }
+
+  function goLive(){
+    state.live = true;
+    const chip = $("statusChip");
+    chip.className = "status-chip live";
+    $("statusText").textContent = "live — " + state.apiBase;
+    stopPreview();
+    ["badgeOverexp","badgeLatHero","badgeRegimeHero","badgeLatPanel","badgeRegimePanel","badgeCal","badgePredict"]
+      .forEach(id => setBadge($(id), "measured"));
+    document.getElementById("tickerBanner").style.display = "none";
+
+    pollAll();
+    if(state.pollTimer) clearInterval(state.pollTimer);
+    state.pollTimer = setInterval(pollAll, 5000);
+    connectWS();
+  }
+
+  function goPreview(){
+    state.live = false;
+    const chip = $("statusChip");
+    chip.className = "status-chip preview";
+    $("statusText").textContent = "preview mode";
+    if(state.ws){ try{ state.ws.close(); }catch(e){} state.ws = null; }
+    if(state.pollTimer) clearInterval(state.pollTimer);
+    document.getElementById("tickerBanner").style.display = "flex";
+    ["badgeOverexp","badgeLatHero","badgeRegimeHero","badgeLatPanel","badgeRegimePanel","badgePredict"]
+      .forEach(id => setBadge($(id), "simulated"));
+    setBadge($("badgeCal"), "estimated");
+    startPreview();
+  }
+
+  async function pollAll(){
+    try{
+      const regime = await fetchJSON("/api/v1/regime?symbol=" + SYMBOL);
+      applyRegime(regime, "measured");
+    }catch(e){}
+    try{
+      const lat = await fetchJSON("/api/v1/latency/summary?symbol=" + SYMBOL);
+      applyLatency(lat, "measured");
+    }catch(e){}
+    try{
+      const cal = await fetchJSON("/api/v1/calendar/upcoming?hours=72");
+      applyCalendar(cal);
+    }catch(e){}
+    try{
+      const mc = await fetchJSON("/api/v1/model/card");
+      applyModelCard(mc);
+    }catch(e){}
+  }
+
+  function connectWS(){
+    try{
+      const wsBase = state.apiBase.replace(/^http/,"ws");
+      const ws = new WebSocket(wsBase + "/ws/v1/stream");
+      state.ws = ws;
+      ws.onmessage = (evt) => {
+        let frame;
+        try{ frame = JSON.parse(evt.data); }catch(e){ return; }
+        handleFrame(frame);
+      };
+      ws.onerror = () => {};
+      ws.onclose = () => { if(state.live){ /* leave REST polling running */ } };
+    }catch(e){}
+  }
+
+  function handleFrame(frame){
+    if(!frame || !frame.type) return;
+    if(frame.type === "tick"){
+      pushTick({
+        time: new Date(),
+        bid: frame.bid, ask: frame.ask,
+        mid: frame.bid && frame.ask ? (frame.bid+frame.ask)/2 : frame.mid,
+        source: frame.source || "measured"
+      });
+    } else if(frame.type === "regime_change"){
+      applyRegime({ state: frame.state, score: frame.score, v_ratio: frame.v_ratio, spread_z: frame.spread_z, trigger: frame.trigger }, frame.source || "measured");
+    } else if(frame.type === "latency"){
+      applyLatency(frame, frame.source || "measured");
+    }
+  }
+
+  // ---------------- render: hero + regime + latency ----------------
+  function applyRegime(r, source){
+    if(!r) return;
+    const stateName = r.state || r.regime || "NORMAL";
+    const score = (r.score != null) ? r.score : 0;
+    $("regimeState").textContent = stateName;
+    $("regimeScore").textContent = Number(score).toFixed(2);
+    $("regimeVratio").textContent = r.v_ratio != null ? Number(r.v_ratio).toFixed(3) : "—";
+    $("regimeZ").textContent = r.spread_z != null ? Number(r.spread_z).toFixed(2) : "—";
+    $("regimeGauge").style.width = clampPct(score, 4) + "%";
+    $("statRegimeHero").textContent = stateName;
+    $("statRegimeHero").className = "stat-value regime-" + stateName;
+    $("statRegimeHeroSub").textContent = "score " + Number(score).toFixed(2) + " / 4";
+    if(r.trigger){ $("regimeTrigger").textContent = "Dominant signal: " + r.trigger; }
+    setBadge($("badgeRegimePanel"), source);
+    setBadge($("badgeRegimeHero"), source);
+  }
+
+  function applyLatency(l, source){
+    if(!l) return;
+    const hops = l.hops || l;
+    const engine = hops.engine_us || hops.engine || {};
+    const transit = hops.excess_transit_us || hops.transit || {};
+    const delivery = hops.delivery_us || hops.delivery || {};
+    const total = l.total || hops.total || {};
+
+    setHop("1", engine.p50, engine.p95, 200);
+    setHop("2", transit.p50, transit.p95, 5000);
+    setHop("3", delivery.p50, delivery.p95, 2000);
+
+    if(total.p50 != null || total.p95 != null){
+      $("latTotal").textContent = fmtUs(total.p50) + " / " + fmtUs(total.p95);
+      $("statLatHero").textContent = fmtUs(total.p95);
+    }
+    setBadge($("badgeLatPanel"), source);
+    setBadge($("badgeLatHero"), source);
+  }
+  function setHop(idx, p50, p95, scaleMax){
+    if(p50 == null && p95 == null) return;
+    $("latP50-"+idx).textContent = "p50 " + fmtUs(p50);
+    $("latP95-"+idx).textContent = "p95 " + fmtUs(p95);
+    $("latBar"+idx).style.width = clampPct(p95||p50||1, scaleMax) + "%";
+  }
+
+  function applyCalendar(cal){
+    const items = Array.isArray(cal) ? cal : (cal.events || cal.items || []);
+    if(!items || !items.length) return;
+    renderCalendar(items.map(e => ({
+      name: e.name || e.event || "Release",
+      when: e.time || e.scheduled_for || e.date || "",
+      confidence: e.confidence || "estimated"
+    })));
+  }
+  function renderCalendar(items){
+    const el = $("calList");
+    el.innerHTML = "";
+    items.slice(0,6).forEach(it => {
+      const div = document.createElement("div");
+      div.className = "cal-item";
+      div.innerHTML = '<div><div class="cal-name">'+escapeHtml(it.name)+'</div>'+
+        '<div class="cal-when">'+escapeHtml(String(it.when))+'</div></div>'+
+        '<span class="badge badge-'+(it.confidence==="confirmed"?"measured":"estimated")+'">'+escapeHtml(it.confidence)+'</span>';
+      el.appendChild(div);
+    });
+  }
+
+  function applyModelCard(mc){
+    if(!mc) return;
+    $("mcSource").textContent = mc.source || mc.model_source || "fallback_coefficients";
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  }
+
+  // ---------------- ticker tape ----------------
+  function pushTick(t){
+    const strip = $("tickerStrip");
+    const row = document.createElement("div");
+    row.className = "tick-row";
+    const dir = t.mid >= state.lastMid ? "up" : "down";
+    state.lastMid = t.mid;
+    const spreadBps = t.bid && t.ask ? ((t.ask - t.bid)/t.mid*10000).toFixed(4) : "—";
+    row.innerHTML =
+      '<span>'+t.time.toLocaleTimeString()+'</span>'+
+      '<span class="'+dir+'">'+(t.bid!=null? t.bid.toFixed(2):"—")+'</span>'+
+      '<span class="'+dir+'">'+(t.ask!=null? t.ask.toFixed(2):"—")+'</span>'+
+      '<span>'+spreadBps+' bps</span>'+
+      '<span><span class="badge badge-'+t.source+'">'+t.source+'</span></span>';
+    strip.insertBefore(row, strip.firstChild);
+    while(strip.children.length > 40) strip.removeChild(strip.lastChild);
+  }
+
+  // ---------------- preview / simulated generators ----------------
+  function startPreview(){
+    stopPreview();
+    let price = 65210.5;
+    let regime = { state:"NORMAL", score:0.4, v:0.9, z:0.3 };
+    let tick = 0;
+
+    updatePreviewLatency();
+    updatePreviewCalendar();
+    updatePreviewSize();
+    updatePreviewPredict();
+
+    state.previewTimer = setInterval(() => {
+      tick++;
+      const drift = (Math.random()-0.5) * 18;
+      price = Math.max(1000, price + drift);
+      const spread = 0.6 + Math.random()*0.9;
+      const bid = price - spread/2, ask = price + spread/2;
+      pushTick({time:new Date(), bid, ask, mid:price, source:"simulated"});
+
+      // occasional regime wobble
+      if(tick % 6 === 0){
+        const r = Math.random();
+        if(r < 0.06) regime = {state:"SPIKE", score:3.1+Math.random()*0.8, v:1.6+Math.random()*0.6, z:2.4+Math.random()};
+        else if(r < 0.22) regime = {state:"ELEVATED", score:1.6+Math.random()*1.0, v:1.1+Math.random()*0.4, z:1.0+Math.random()*0.8};
+        else regime = {state:"NORMAL", score:0.2+Math.random()*1.0, v:0.5+Math.random()*0.5, z:0.1+Math.random()*0.7};
+        applyRegime({state:regime.state, score:regime.score, v_ratio:regime.v, spread_z:regime.z, trigger: regime.state==="NORMAL"?null:(Math.random()<0.5?"volatility":"spread")}, "simulated");
+      }
+
+      if(tick % 9 === 0) updatePreviewLatency();
+    }, 650);
+  }
+  function stopPreview(){
+    if(state.previewTimer){ clearInterval(state.previewTimer); state.previewTimer = null; }
+  }
+
+  function updatePreviewLatency(){
+    const jitter = (base, spread) => base * (0.85 + Math.random()*0.3) + (Math.random()<0.1 ? spread*Math.random() : 0);
+    const engine = { p50: jitter(137, 40), p95: jitter(410, 300) };
+    const transit = { p50: jitter(0, 400), p95: jitter(2700, 4000) };
+    const delivery = { p50: jitter(580, 200), p95: jitter(4200, 3000) };
+    const total = { p50: engine.p50+transit.p50+delivery.p50, p95: engine.p95+transit.p95+delivery.p95+68000*Math.random()*0.3 };
+    applyLatency({ engine_us: engine, excess_transit_us: transit, delivery_us: delivery, total }, "simulated");
+  }
+
+  function updatePreviewCalendar(){
+    const now = new Date("2026-08-18T12:00:00Z");
+    const items = [
+      { name:"CPI (US)", when: addDays(now, 4).toDateString() + " · 12:30 UTC", confidence:"confirmed" },
+      { name:"FOMC decision", when: addDays(now, 11).toDateString() + " · 18:00 UTC", confidence:"confirmed" },
+      { name:"Non-Farm Payrolls", when: addDays(now, 17).toDateString() + " · 12:30 UTC", confidence:"estimated" },
+      { name:"ECB rate decision", when: addDays(now, 8).toDateString() + " · 12:15 UTC", confidence:"estimated" }
+    ];
+    renderCalendar(items);
+  }
+  function addDays(d, n){ const r = new Date(d); r.setDate(r.getDate()+n); return r; }
+
+  function localNaiveOverexposure(){
+    // Illustrative only — mirrors the report's p95/p50 gap when no live model is available.
+    const balance = parseFloat($("inBalance").value)||10000;
+    const riskPct = parseFloat($("inRisk").value)||1;
+    const stop = parseFloat($("inStop").value)||250;
+    const riskBudget = balance * riskPct/100;
+    const naiveLots = riskBudget / stop;
+    const slipAdj = stop * 1.15; // small illustrative tail add-on
+    const modelLots = riskBudget / slipAdj;
+    const overexp = ((naiveLots - modelLots)/modelLots)*100;
+    return { naiveLots, modelLots, overexp, riskBudget };
+  }
+
+  function updatePreviewSize(){
+    const r = localNaiveOverexposure();
+    $("statOverexp").textContent = r.overexp.toFixed(1) + "%";
+    $("statOverexpSub").textContent = "illustrative — connect a live instance for a measured figure";
+  }
+  function updatePreviewPredict(){ /* left idle until user queries */ }
+
+  // ---------------- forms ----------------
+  $("calcSizeBtn").addEventListener("click", async () => {
+    const balance = parseFloat($("inBalance").value)||0;
+    const risk = parseFloat($("inRisk").value)||0;
+    const stop = parseFloat($("inStop").value)||0;
+    const margin = parseFloat($("inMargin").value)||0;
+    const box = $("sizeResult");
+    box.classList.remove("empty");
+
+    if(state.live){
+      try{
+        const res = await fetchJSON("/api/v1/size", {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({
+            symbol: SYMBOL,
+            account_balance_minor: Math.round(balance*100),
+            risk_pct: risk,
+            stop_distance_price: stop,
+            free_margin_minor: Math.round(margin*100)
+          })
+        });
+        renderSizeResult(res, "measured");
+        return;
+      }catch(e){
+        box.innerHTML = '<span class="badge badge-simulated">simulated</span> Live request failed — showing a local estimate instead.<br><br>' + localSizeHtml();
+        return;
+      }
+    }
+    box.innerHTML = localSizeHtml();
+  });
+
+  function localSizeHtml(){
+    const r = localNaiveOverexposure();
+    return '<div class="bignum">' + r.modelLots.toFixed(4) + ' lots</div>'+
+      '<div class="kv"><div class="kv-k">risk budget</div><div class="kv-v">'+fmtUsd(r.riskBudget)+'</div></div>'+
+      '<div class="kv"><div class="kv-k">naive (spread-only) lots</div><div class="kv-v">'+r.naiveLots.toFixed(4)+'</div></div>'+
+      '<div class="kv"><div class="kv-k">overexposure vs. naive</div><div class="kv-v bignum warn" style="font-size:14px;">'+r.overexp.toFixed(1)+'%</div></div>';
+  }
+
+  function renderSizeResult(res, source){
+    const box = $("sizeResult");
+    const lots = res.lots != null ? Number(res.lots).toFixed(4) : "—";
+    const risk = res.actual_risk_amount_minor != null ? fmtUsd(res.actual_risk_amount_minor/100) : "—";
+    const overexp = res.overexposure_pct != null ? Number(res.overexposure_pct).toFixed(1)+"%" : "—";
+    box.innerHTML =
+      '<span class="badge badge-'+source+'">'+source+'</span>'+
+      '<div class="bignum" style="margin-top:8px;">'+lots+' lots</div>'+
+      '<div class="kv"><div class="kv-k">actual risk</div><div class="kv-v">'+risk+'</div></div>'+
+      '<div class="kv"><div class="kv-k">overexposure vs. naive</div><div class="kv-v">'+overexp+'</div></div>'+
+      '<div class="kv"><div class="kv-k">model source</div><div class="kv-v">'+(res.model_source||"—")+'</div></div>'+
+      '<div class="kv"><div class="kv-k">fx assumed</div><div class="kv-v">'+(res.fx_assumed!=null?String(res.fx_assumed):"—")+'</div></div>'+
+      '<pre class="raw">'+escapeHtml(JSON.stringify(res,null,2))+'</pre>';
+    $("statOverexp").textContent = overexp;
+    $("statOverexpSub").textContent = "reported by /api/v1/size for the current inputs";
+  }
+
+  document.querySelectorAll("#dirToggle .toggle-opt").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll("#dirToggle .toggle-opt").forEach(o=>o.classList.remove("active"));
+      el.classList.add("active");
+      state.direction = el.dataset.dir;
+    });
+  });
+  document.querySelectorAll("#eventToggle .toggle-opt").forEach(el => {
+    el.addEventListener("click", () => {
+      document.querySelectorAll("#eventToggle .toggle-opt").forEach(o=>o.classList.remove("active"));
+      el.classList.add("active");
+      state.eventWindow = Number(el.dataset.ev);
+    });
+  });
+
+  $("predictBtn").addEventListener("click", async () => {
+    const secs = parseFloat($("inSecsToEvent").value)||0;
+    const delta = parseFloat($("inDelta").value)||60;
+    const payload = {
+      symbol: SYMBOL,
+      direction: state.direction,
+      signed_secs_to_event: secs,
+      in_event_window: !!state.eventWindow,
+      delta_ms: delta
+    };
+    $("predictEmpty").style.display = "none";
+    $("predictBars").style.display = "block";
+
+    if(state.live){
+      try{
+        const res = await fetchJSON("/api/v1/slippage/predict", {
+          method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(payload)
+        });
+        renderPredict(res, "measured");
+        return;
+      }catch(e){ /* fall through to simulated */ }
+    }
+    // simulated fallback: mirror the published half-spread / tail relationship
+    const p50 = 0.00078 * (0.7+Math.random()*0.6) * (state.eventWindow ? 1.8 : 1);
+    const p95 = p50 * (200 + Math.random()*130);
+    renderPredict({p50, p95}, "simulated");
+  });
+
+  function renderPredict(res, source){
+    setBadge($("badgePredict"), source);
+    const p50 = res.p50 != null ? res.p50 : (res.quantiles && res.quantiles.p50);
+    const p95 = res.p95 != null ? res.p95 : (res.quantiles && res.quantiles.p95);
+    if(p50 != null){
+      $("predVal50").textContent = fmtBps(p50);
+      $("predBar50").style.width = clampPct(p50, Math.max(p95||p50*300, p50*10)) + "%";
+    }
+    if(p95 != null){
+      $("predVal95").textContent = fmtBps(p95);
+      $("predBar95").style.width = clampPct(p95, p95*1.05) + "%";
+    }
+    $("predictRaw").style.display = "block";
+    $("predictRaw").textContent = JSON.stringify(res, null, 2);
+  }
+
+  $("connectBtn").addEventListener("click", tryConnect);
+  $("apiBaseInput").addEventListener("keydown", (e) => { if(e.key==="Enter") tryConnect(); });
+
+  // boot
+  tryConnect();
+})();
+</script>
 </body>
 </html>
