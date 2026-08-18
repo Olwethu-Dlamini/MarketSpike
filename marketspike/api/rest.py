@@ -117,6 +117,28 @@ def latency_summary(symbol: str = Query(...)) -> Dict[str, Any]:
     }
 
 
+@router.get("/calendar/upcoming")
+def calendar_upcoming(
+    hours: float = Query(24.0), symbol: str = Query(None)
+) -> Dict[str, Any]:
+    clock = _state().get("event_clock")
+    if clock is None:
+        return {"v": 1, "events": []}
+    now_ns = time.time_ns()
+    return {
+        "v": 1,
+        "events": [
+            {
+                "name": event.name, "importance": event.importance,
+                "country": event.country, "event_ts_ns": event.event_ts_ns,
+                "seconds_until": int((event.event_ts_ns - now_ns) / 1e9),
+                "affects": event.affects,
+            }
+            for event in clock.upcoming(now_ns, hours, symbol)
+        ],
+    }
+
+
 def _problem(status: int, slug: str, title: str, detail: str, instance: str) -> HTTPException:
     return HTTPException(
         status_code=status,
@@ -131,6 +153,18 @@ def _features(engine, latency_ms: float) -> Dict[str, float]:
     tick = engine.last_tick if engine else None
     v_ratio = (engine.v_ratio if engine else None) or 1.0
     spread_bps = tick.spread_bps if tick else 1.0
+
+    # Real signed seconds-to-event from the economic calendar, falling
+    # back to 1800.0 -- the clock's own clipped "no event nearby" sentinel
+    # -- when there's no clock or no event relevant to this symbol, rather
+    # than 0.0 (which would mean "an event is happening right now" and
+    # would train/serve-skew every quote).
+    clock = _state().get("event_clock")
+    signed_secs_to_event = 1800.0
+    if clock is not None and engine is not None and tick is not None:
+        if clock.relevant(tick.recv_ts_ns, engine.symbol) is not None:
+            signed_secs_to_event = clock.signed_seconds(tick.recv_ts_ns, engine.symbol)
+
     return {
         "log_v_ratio": math.log(max(v_ratio, 1e-9)),
         "spread_z": engine.spread_z if engine else 0.0,
@@ -138,12 +172,7 @@ def _features(engine, latency_ms: float) -> Dict[str, float]:
         "log_latency_ms": math.log(max(latency_ms, 1e-3)),
         "quote_rate_hz": engine.quote_rate_hz if engine else 0.0,
         "book_imbalance": tick.book_imbalance if tick else 0.0,
-        # Task 18 wire-up point: the economic calendar will replace this
-        # constant with a real signed seconds-to-next-event value. Until
-        # then we use 1800.0 -- the calendar's clipped "no event nearby"
-        # sentinel -- rather than 0.0, which would mean "an event is
-        # happening right now" and would train/serve-skew every quote.
-        "signed_secs_to_event": 1800.0,
+        "signed_secs_to_event": signed_secs_to_event,
         "in_event_window": 1.0 if (engine and engine.event_context == "EVENT_WINDOW") else 0.0,
         # Read from the engine's rolling price buffer (never hardcoded),
         # so this matches exactly what the ML training path computes.

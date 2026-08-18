@@ -39,6 +39,7 @@ class SymbolEngine:
         skew_window_s: float = 60.0,
         ws_max_hz: float = 20.0,
         vol_sample_interval_s: float = 1.0,
+        event_clock=None,
     ) -> None:
         self.symbol = symbol
         self.bus = bus
@@ -48,6 +49,7 @@ class SymbolEngine:
         self.spread = SpreadTracker()
         self.fsm = RegimeFSM()
         self.event_context = "CLEAR"
+        self.event_clock = event_clock
 
         self._min_frame_ns = int(1e9 / ws_max_hz) if ws_max_hz > 0 else 0
         self._last_frame_ns = 0
@@ -152,6 +154,27 @@ class SymbolEngine:
                     }
                 )
             )
+
+        if self.event_clock is not None:
+            previous_context = self.event_context
+            self.event_context = self.event_clock.phase(tick.recv_ts_ns, self.symbol)
+            if self.event_context != previous_context and self.event_context != "CLEAR":
+                event = self.event_clock.relevant(tick.recv_ts_ns, self.symbol)
+                if event is not None:
+                    self.bus.publish(
+                        self._envelope(
+                            {
+                                "type": "event_alert", "name": event.name,
+                                "importance": event.importance,
+                                "event_ts_ns": event.event_ts_ns,
+                                "seconds_until": int(
+                                    (event.event_ts_ns - tick.recv_ts_ns) / 1e9
+                                ),
+                                "phase": self.event_context,
+                                "affects": event.affects,
+                            }
+                        )
+                    )
 
         self._record_price(tick.recv_ts_ns, tick.mid)
         self.v_ratio = self.vol.update(tick.recv_ts_ns, tick.mid)

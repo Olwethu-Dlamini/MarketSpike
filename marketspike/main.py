@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from marketspike.api import rest as rest_api
 from marketspike.api import ws as ws_api
+from marketspike.calendar.clock import EventClock, load_events
 from marketspike.config import get_settings
 from marketspike.engine.bus import Bus
 from marketspike.engine.supervisor import supervise
@@ -78,6 +79,18 @@ async def startup() -> None:
     STATE["recorder"] = recorder
     STATE["adapters"] = adapters
 
+    event_clock = EventClock(load_events())
+    STATE["event_clock"] = event_clock
+    conn.executemany(
+        "INSERT INTO calendar_events (event_ts_ns, name, importance, country, affects) "
+        "VALUES (?, ?, ?, ?, ?)",
+        [
+            (e.event_ts_ns, e.name, e.importance, e.country, ",".join(e.affects))
+            for e in load_events()
+        ],
+    )
+    conn.commit()
+
     engines = {}
     for symbol, adapter in adapters.items():
         engines[symbol] = SymbolEngine(
@@ -85,6 +98,7 @@ async def startup() -> None:
             tau_fast_s=settings.tau_fast_s, tau_slow_s=settings.tau_slow_s,
             skew_window_s=settings.skew_window_s, ws_max_hz=settings.ws_max_hz,
             vol_sample_interval_s=settings.vol_sample_interval_s,
+            event_clock=event_clock,
         )
     STATE["engines"] = engines
 
