@@ -1,0 +1,12 @@
+.superpowers/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.db
+*.db-wal
+*.db-shm
+.pytest_cache/
+model.json
+scenarios/*.ndjson
