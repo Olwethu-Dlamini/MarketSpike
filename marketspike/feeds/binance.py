@@ -10,18 +10,36 @@ import websockets
 
 from marketspike.feeds.base import Tick
 
-WS_URL = "wss://stream.binance.com:9443/stream?streams={0}@bookTicker"
+# NOTE ON THE DEPTH SIDE-CHANNEL:
+# Binance's bookTicker stream (verified empirically against the live venue)
+# does NOT emit an "E" (event time) field -- its payload keys are exactly
+# ['A','B','a','b','s','u']. bookTicker is still the right stream to drive
+# ticks/prices (it's the tightest top-of-book feed), but it gives us no way
+# to recover venue-side timing on its own.
+#
+# depth@100ms frames, in contrast, DO carry "E" (keys include 'E','U','a',
+# 'b','e','s','u'). We subscribe to depth@100ms on the SAME combined socket
+# purely as a timing side-channel: we read its "E" field to measure the
+# connection's raw transit latency (recv_ts_ns - venue_ts_ns) and then
+# discard the frame entirely -- no order-book snapshot, no diff
+# application, no state. Transit latency is a property of the connection,
+# not of an individual quote, so sampling it at 10 Hz on the same socket
+# and applying it to bookTicker ticks is legitimate.
+#
+# Do NOT delete this subscription as "unused" -- it is the only source of
+# venue timing for every tick this adapter emits.
+WS_URL = "wss://stream.binance.com:9443/stream?streams={0}@bookTicker/{0}@depth@100ms"
 KLINES_URL = "https://api.binance.com/api/v3/klines"
 
 
-def parse_book_ticker(raw: Dict, recv_ts_ns: int) -> Optional[Tick]:
+def parse_book_ticker(raw: Dict, recv_ts_ns: int, venue_ts_ns: int) -> Optional[Tick]:
     data = raw.get("data", raw)
-    required_keys = ("s", "E", "b", "a", "B", "A")
+    required_keys = ("s", "b", "a", "B", "A")
     if any(key not in data for key in required_keys):
         return None
     return Tick(
         symbol=data["s"],
-        venue_ts_ns=int(data["E"]) * 1_000_000,
+        venue_ts_ns=venue_ts_ns,
         recv_ts_ns=recv_ts_ns,
         bid=float(data["b"]),
         ask=float(data["a"]),
@@ -30,6 +48,18 @@ def parse_book_ticker(raw: Dict, recv_ts_ns: int) -> Optional[Tick]:
         tradeable=True,
         source="measured",
     )
+
+
+def parse_depth_event_ts_ns(raw: Dict) -> Optional[int]:
+    """Extract venue event time (ns) from a depth@100ms frame, else None.
+
+    This is the timing side-channel described above: depth frames are never
+    used for order-book state, only for their "E" field.
+    """
+    data = raw.get("data", raw)
+    if data.get("e") != "depthUpdate" or "E" not in data:
+        return None
+    return int(data["E"]) * 1_000_000
 
 
 def variance_per_second_from_closes(closes: List[float], interval_s: float) -> float:
@@ -52,6 +82,7 @@ class BinanceAdapter:
     def __init__(self, symbol: str) -> None:
         self.symbol = symbol
         self.connected = False
+        self._last_raw_transit_ns = None  # type: Optional[int]
 
     async def seed_baseline(self) -> Optional[float]:
         params = {"symbol": self.symbol, "interval": "1m", "limit": 1440}
@@ -74,7 +105,16 @@ class BinanceAdapter:
                     backoff = 1.0
                     async for message in socket:
                         recv_ts_ns = time.time_ns()
-                        tick = parse_book_ticker(json.loads(message), recv_ts_ns)
+                        raw = json.loads(message)
+                        depth_venue_ts_ns = parse_depth_event_ts_ns(raw)
+                        if depth_venue_ts_ns is not None:
+                            self._last_raw_transit_ns = recv_ts_ns - depth_venue_ts_ns
+                            continue
+                        if self._last_raw_transit_ns is None:
+                            venue_ts_ns = recv_ts_ns
+                        else:
+                            venue_ts_ns = recv_ts_ns - self._last_raw_transit_ns
+                        tick = parse_book_ticker(raw, recv_ts_ns, venue_ts_ns)
                         if tick is not None:
                             yield tick
             except asyncio.CancelledError:
