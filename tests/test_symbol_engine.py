@@ -1,4 +1,5 @@
 import math
+import threading
 
 from marketspike.engine.bus import Bus
 from marketspike.engine.symbol_state import SymbolEngine
@@ -204,3 +205,50 @@ def test_abs_return_5s_buffer_is_bounded_by_age():
     oldest_ts = engine._price_history[0][0]
     newest_ts = engine._price_history[-1][0]
     assert (newest_ts - oldest_ts) <= 7 * SECOND
+
+
+def test_abs_return_5s_survives_genuine_cross_thread_access():
+    """Regression for the confirmed production 500.
+
+    FastAPI runs plain `def` routes (e.g. /size, /regime) in a worker
+    threadpool, where they read abs_return_5s (via _features()/snapshot()),
+    while on_tick() -- and the _price_history append/prune it does -- runs
+    on the asyncio event-loop thread. Walking _price_history while on_tick
+    concurrently mutates it previously raised
+    `RuntimeError: deque mutated during iteration`. This test drives both
+    sides from real OS threads so it only passes if they are genuinely
+    safe to run concurrently.
+    """
+    engine = make_engine()
+    iterations = 5000
+    errors = []
+    stop = threading.Event()
+
+    def writer():
+        ts = 0
+        mid = 100.0
+        try:
+            for step in range(iterations):
+                ts += SECOND // 100
+                mid += 0.001
+                engine.on_tick(tick_at(ts, mid))
+        except Exception as exc:  # pragma: no cover - only on regression
+            errors.append(exc)
+        finally:
+            stop.set()
+
+    def reader():
+        try:
+            while not stop.is_set():
+                engine.abs_return_5s
+        except Exception as exc:  # pragma: no cover - only on regression
+            errors.append(exc)
+
+    writer_thread = threading.Thread(target=writer)
+    reader_thread = threading.Thread(target=reader)
+    reader_thread.start()
+    writer_thread.start()
+    writer_thread.join(timeout=30)
+    reader_thread.join(timeout=30)
+
+    assert not errors, "cross-thread access raised: {0}".format(errors)

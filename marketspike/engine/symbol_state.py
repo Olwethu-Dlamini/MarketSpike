@@ -1,4 +1,5 @@
 import math
+import threading
 import time
 from collections import deque
 from typing import Any, Deque, Dict, Optional, Tuple
@@ -65,6 +66,12 @@ class SymbolEngine:
         # here rather than downstream so the ML feature builder (and Task
         # 17) never risk train/serve skew against this value.
         self._price_history: Deque[Tuple[int, float]] = deque()
+        # on_tick() (via _record_price) runs on the asyncio event-loop
+        # thread; abs_return_5s is read from plain `def` FastAPI routes,
+        # which Starlette runs in a worker threadpool (via _features() and
+        # snapshot()). Both mutate/walk the same deque, so both sides take
+        # this lock.
+        self._price_history_lock = threading.Lock()
 
     def seed(self, var_per_second: float) -> None:
         self.vol.seed_slow(var_per_second)
@@ -81,17 +88,18 @@ class SymbolEngine:
         whose age is >= 5s (walking from the oldest entry forward) is the
         best available approximation of "the price 5 seconds ago".
         """
-        if not self._price_history:
-            return 0.0
-        newest_ts, newest_mid = self._price_history[-1]
-        target_ts = newest_ts - ABS_RETURN_LOOKBACK_NS
+        with self._price_history_lock:
+            if not self._price_history:
+                return 0.0
+            newest_ts, newest_mid = self._price_history[-1]
+            target_ts = newest_ts - ABS_RETURN_LOOKBACK_NS
 
-        candidate: Optional[Tuple[int, float]] = None
-        for ts_ns, mid in self._price_history:
-            if ts_ns <= target_ts:
-                candidate = (ts_ns, mid)
-            else:
-                break
+            candidate: Optional[Tuple[int, float]] = None
+            for ts_ns, mid in self._price_history:
+                if ts_ns <= target_ts:
+                    candidate = (ts_ns, mid)
+                else:
+                    break
         if candidate is None:
             return 0.0
 
@@ -101,10 +109,11 @@ class SymbolEngine:
         return abs(math.log(newest_mid / old_mid))
 
     def _record_price(self, ts_ns: int, mid: float) -> None:
-        self._price_history.append((ts_ns, mid))
-        cutoff = ts_ns - PRICE_HISTORY_WINDOW_NS
-        while self._price_history and self._price_history[0][0] < cutoff:
-            self._price_history.popleft()
+        with self._price_history_lock:
+            self._price_history.append((ts_ns, mid))
+            cutoff = ts_ns - PRICE_HISTORY_WINDOW_NS
+            while self._price_history and self._price_history[0][0] < cutoff:
+                self._price_history.popleft()
 
     def _update_quote_rate(self, ts_ns: int) -> None:
         if self._last_rate_ts_ns is None:

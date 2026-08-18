@@ -1,3 +1,6 @@
+import threading
+import time
+
 from marketspike.engine.pipeline import LatencyAggregator, PipelineTimer, percentile
 from marketspike.feeds.base import Tick
 
@@ -81,3 +84,57 @@ def test_aggregator_keeps_stored_order_non_decreasing_despite_decreasing_arrival
     agg.add(ts_ns=10 * SECOND, value_us=10)
     stored_timestamps = [ts for ts, _ in agg._samples]
     assert stored_timestamps == sorted(stored_timestamps)
+
+
+def test_add_and_percentiles_survive_genuine_cross_thread_access():
+    """Regression for the confirmed production 500.
+
+    FastAPI runs plain `def` routes (e.g. /latency/summary) in a worker
+    threadpool, while the engine's tick path calls add() from the asyncio
+    event-loop thread. Reading percentiles() while add() is concurrently
+    mutating the same deque previously raised
+    `RuntimeError: deque mutated during iteration`. This test drives both
+    sides from real OS threads (not simulated/interleaved in one thread) so
+    it only passes if the two really are safe to run concurrently.
+    """
+    iterations = 50_000
+    rounds = 5  # each round independently has a high chance of tripping the
+    # race; repeating amplifies detection probability to effectively certain
+    # while a correctly-locked implementation passes every round every time.
+    errors = []
+
+    for _ in range(rounds):
+        if errors:
+            break
+        agg = LatencyAggregator(window_s=300.0)
+        stop = threading.Event()
+
+        def writer():
+            ts = 0
+            try:
+                for i in range(iterations):
+                    ts += 1000
+                    agg.add(ts_ns=ts, value_us=i % 1000)
+            except Exception as exc:  # pragma: no cover - only on regression
+                errors.append(exc)
+            finally:
+                stop.set()
+
+        def reader():
+            try:
+                while not stop.is_set():
+                    agg.percentiles(ts_ns=time.time_ns())
+            except Exception as exc:  # pragma: no cover - only on regression
+                errors.append(exc)
+
+        writer_threads = [threading.Thread(target=writer) for _ in range(2)]
+        reader_threads = [threading.Thread(target=reader) for _ in range(4)]
+        for t in reader_threads + writer_threads:
+            t.start()
+        for t in writer_threads:
+            t.join(timeout=30)
+        stop.set()
+        for t in reader_threads:
+            t.join(timeout=30)
+
+    assert not errors, "cross-thread access raised: {0}".format(errors)

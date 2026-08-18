@@ -1,4 +1,5 @@
 import math
+import threading
 from collections import deque
 from typing import Deque, List, Tuple
 
@@ -40,6 +41,14 @@ class LatencyAggregator:
         self._window_ns = int(window_s * 1_000_000_000)
         self._samples: Deque[Tuple[int, int]] = deque()
         self._max_ts_ns = 0  # highest ts_ns ever passed to add()
+        # add() runs on the asyncio event-loop thread (the engine's tick
+        # path); percentiles() is reached from plain `def` FastAPI routes,
+        # which Starlette runs in a worker threadpool. Both mutate/iterate
+        # the same deque, so every access -- including the internal
+        # _evict() -- must happen under this lock. _evict() itself does
+        # not acquire it: it is only ever called by add() or percentiles(),
+        # which already hold it, and the lock is not reentrant.
+        self._lock = threading.Lock()
 
     def add(self, ts_ns: int, value_us: int) -> None:
         """Record a sample.
@@ -54,9 +63,10 @@ class LatencyAggregator:
         age, but bounded (it expires with the rest of its cohort) and
         never able to lodge permanently behind a live front.
         """
-        self._max_ts_ns = max(ts_ns, self._max_ts_ns)
-        self._samples.append((self._max_ts_ns, value_us))
-        self._evict(self._max_ts_ns)
+        with self._lock:
+            self._max_ts_ns = max(ts_ns, self._max_ts_ns)
+            self._samples.append((self._max_ts_ns, value_us))
+            self._evict(self._max_ts_ns)
 
     def _evict(self, now_ns: int) -> None:
         cutoff = now_ns - self._window_ns
@@ -70,8 +80,9 @@ class LatencyAggregator:
         # established, but a genuinely later read (e.g. a quiet symbol
         # being reported on long after its last tick) must still be able
         # to age the window forward.
-        self._evict(max(ts_ns, self._max_ts_ns))
-        values = sorted(value for _, value in self._samples)
+        with self._lock:
+            self._evict(max(ts_ns, self._max_ts_ns))
+            values = sorted(value for _, value in self._samples)
         return (
             percentile(values, 0.50),
             percentile(values, 0.95),
