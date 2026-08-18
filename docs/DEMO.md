@@ -1,5 +1,8 @@
 # MarketSpike — Demo Guide
 
+> **Live service:** https://marketspike.onrender.com — demo from here so judges can open it themselves.
+> Keep a local instance running as a fallback.
+
 Everything needed to run the demo, plus the pre-flight checks that stop it failing on stage.
 
 ---

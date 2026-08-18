@@ -1,5 +1,8 @@
 # Deploying MarketSpike to Render
 
+> **Already deployed:** https://marketspike.onrender.com
+> Health check: `https://marketspike.onrender.com/api/v1/health` · Interactive API: `https://marketspike.onrender.com/docs`
+
 Written for someone who has never deployed anything. Read section 1 even if you want to skip ahead — it explains what you're actually doing.
 
 ---
@@ -51,6 +54,21 @@ git add model.json && git commit -m "chore: retrain model" && git push
 ```
 
 Render redeploys, and `/api/v1/model/card` reports `source: "trained"`.
+
+**A useful wrinkle, measured on the live instance.** Render's Frankfurt region is far
+closer to Binance than a laptop in South Africa, so it sees roughly **8x the tick rate** —
+about 127 ticks/sec against 16 locally. In its first ten minutes the deployed service
+recorded 78,144 ticks; the same wall-clock locally yields around 10,000.
+
+So between deploys, Render is the *better* recorder. Two caveats before relying on it:
+
+- The database is wiped on every redeploy, so pull the data out before you push again.
+- A free instance sleeps after ~15 minutes without inbound HTTP, and the recorder stops
+  with it. Keeping a browser tab open on `/api/v1/health` (or any uptime pinger) keeps it
+  awake and recording.
+
+To retrieve what it captured, run the capture script against the live service rather than
+a local file — or simply train locally, where the data is yours to keep.
 
 ### Free instances go to sleep
 

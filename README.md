@@ -2,6 +2,9 @@
 
 **Slippage-aware position sizing for high-impact market events.**
 
+**Live:** [https://marketspike.onrender.com/docs](https://marketspike.onrender.com/docs) — interactive API, try any endpoint in the browser.
+Health: [`/api/v1/health`](https://marketspike.onrender.com/api/v1/health)
+
 Live market data → measured pipeline latency → volatility regime detection → a position size that accounts for what a conventional calculator ignores.
 
 ---
@@ -95,6 +98,9 @@ The p50 coverage of 0.181 looks badly off but is an artefact of price discretene
 ## Quick start
 
 Requires Python 3.8+ and network access. No API key is needed for BTCUSDT.
+
+You do not have to run it at all — a live instance is at
+[https://marketspike.onrender.com](https://marketspike.onrender.com/docs). To run your own:
 
 ```bash
 git clone https://github.com/Olwethu-Dlamini/MarketSpike.git

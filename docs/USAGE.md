@@ -16,6 +16,10 @@ MS_SYMBOLS=BTCUSDT python -m marketspike.main
 
 Listens on `http://localhost:8000`. BTCUSDT needs **no API key**.
 
+> **Already hosted.** A live instance runs at `https://marketspike.onrender.com`. Every `localhost:8000`
+> example below works against it — swap the host, and use `wss://` rather than
+> `ws://` for the WebSocket, since it is served over HTTPS.
+
 > Always start it with `python -m marketspike.main`. The entrypoint passes uvicorn the import string `"marketspike.main:app"` deliberately — launching the app object directly causes Python to load the module twice under two names, giving the WebSocket handler a second, never-initialised state dict.
 
 **Adding EURUSD** requires a free OANDA *practice* account:
