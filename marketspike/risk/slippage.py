@@ -100,11 +100,18 @@ _FALLBACK: Dict[str, Dict[str, Dict[str, Any]]] = {
 }
 
 # Symbols whose quote currency isn't in the instrument registry (or which
-# aren't registered at all) still need an asset-class guess. USDT/USDC are
-# unambiguous crypto stablecoin quotes; a bare "USD" suffix is NOT included
-# here because it also matches FX pairs like EURUSD.
-_CRYPTO_QUOTE_CCYS = frozenset({"USDT", "USDC"})
-_CRYPTO_SUFFIXES = ("USDT", "USDC")
+# aren't registered at all) still need an asset-class guess. USDT/USDC/BUSD
+# are unambiguous crypto stablecoin quotes; a bare "USD" suffix is NOT
+# included here because it also matches FX pairs like EURUSD.
+#
+# This constant is also the single source of truth for main.py's
+# build_adapters() venue routing (Task 22/23) -- it decides Binance vs OANDA
+# there the same way it decides the fx/crypto prior set here. Exported
+# without a leading underscore for that cross-module use; main.py may import
+# anything from risk/, so this does not cross the risk/ import boundary
+# (which only forbids risk/ -> feeds/engine/store, not the reverse).
+CRYPTO_QUOTE_CCYS = frozenset({"USDT", "USDC", "BUSD"})
+_CRYPTO_SUFFIXES = ("USDT", "USDC", "BUSD")
 
 
 def _asset_class(symbol: str) -> str:
@@ -116,7 +123,7 @@ def _asset_class(symbol: str) -> str:
     # back to a symbol-suffix rule for anything not (yet) in the registry.
     instrument = REGISTRY.get(symbol)
     if instrument is not None:
-        return "crypto" if instrument.quote_ccy in _CRYPTO_QUOTE_CCYS else "fx"
+        return "crypto" if instrument.quote_ccy in CRYPTO_QUOTE_CCYS else "fx"
     return "crypto" if symbol.endswith(_CRYPTO_SUFFIXES) else "fx"
 
 

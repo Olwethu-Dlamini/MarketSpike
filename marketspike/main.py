@@ -17,7 +17,8 @@ from marketspike.engine.supervisor import supervise
 from marketspike.engine.symbol_state import SymbolEngine
 from marketspike.feeds.binance import BinanceAdapter
 from marketspike.feeds.oanda import OandaAdapter
-from marketspike.risk.slippage import resolve_models
+from marketspike.risk.instruments import REGISTRY
+from marketspike.risk.slippage import CRYPTO_QUOTE_CCYS, resolve_models
 from marketspike.store.db import apply_schema, open_db
 from marketspike.store.recorder import Recorder
 
@@ -42,22 +43,37 @@ STATE: Dict[str, object] = {"started_ns": 0, "adapters": {}, "tasks": []}
 
 
 def build_adapters(settings) -> Dict[str, object]:
+    """Select a venue adapter per symbol from the instrument registry.
+
+    Adding a new tradeable symbol is a config change, not a code change:
+    register it in marketspike/risk/instruments.json with the right
+    quote_ccy and it is routed here automatically. This function must never
+    raise -- an unregistered or credential-less symbol is skipped with a
+    clear log message instead.
+    """
     adapters: Dict[str, object] = {}
     for symbol in settings.symbols:
-        if symbol == "BTCUSDT":
+        instrument = REGISTRY.get(symbol)
+        if instrument is None:
+            LOGGER.warning(
+                "no instrument registered for symbol %s; add it to "
+                "marketspike/risk/instruments.json",
+                symbol,
+            )
+            continue
+        if instrument.quote_ccy in CRYPTO_QUOTE_CCYS:
             adapters[symbol] = BinanceAdapter(symbol)
-        elif symbol == "EURUSD":
+        else:
             if not (settings.oanda_token and settings.oanda_account_id):
                 LOGGER.error(
-                    "EURUSD requested but MS_OANDA_TOKEN/MS_OANDA_ACCOUNT_ID "
-                    "are unset; symbol will be unavailable"
+                    "%s requested but MS_OANDA_TOKEN/MS_OANDA_ACCOUNT_ID "
+                    "are unset; symbol will be unavailable",
+                    symbol,
                 )
                 continue
             adapters[symbol] = OandaAdapter(
                 symbol, settings.oanda_token, settings.oanda_account_id
             )
-        else:
-            LOGGER.warning("no adapter registered for symbol %s", symbol)
     return adapters
 
 
