@@ -94,8 +94,21 @@ def _make_ingest(adapter, recorder: Recorder):
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    for task in STATE.get("tasks", []):
+    tasks = STATE.get("tasks") or []
+    for task in tasks:
         task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    recorder = STATE.get("recorder")
+    if recorder is not None:
+        for _ in range(100):
+            written = await recorder.flush_once()
+            if not written:
+                break
+        else:
+            LOGGER.warning("recorder queue still non-empty after shutdown drain cap")
+
     conn = STATE.get("conn")
     if conn is not None:
         conn.close()
