@@ -64,7 +64,14 @@ async def stream(websocket: WebSocket) -> None:
                     "type": "hello",
                     "session_id": uuid.uuid4().hex[:8],
                     "server_version": "1.0.0",
-                    "warmup_complete": bool(STATE.get("warmup_complete", False)),
+                    # Derived live from the engines, not read from a flag set
+                    # once at startup -- a static flag would report False forever.
+                    "warmup_complete": all(
+                        engine.warmup_complete
+                        for engine in STATE.get("engines", {}).values()
+                    )
+                    if STATE.get("engines")
+                    else False,
                     "feeds": {
                         name: adapter.venue
                         for name, adapter in STATE.get("adapters", {}).items()

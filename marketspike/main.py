@@ -101,7 +101,7 @@ async def startup() -> None:
     adapters = build_adapters(settings)
     STATE["bus"] = Bus()
     STATE["mode"] = "live"
-    STATE["warmup_complete"] = False
+    # NOTE: warm-up is derived live from the engines in api/ws.py; no static flag.
 
     STATE["started_ns"] = time.time_ns()
     STATE["settings"] = settings

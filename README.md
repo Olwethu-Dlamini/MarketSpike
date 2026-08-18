@@ -107,7 +107,9 @@ pip install -e .
 MS_SYMBOLS=BTCUSDT python -m marketspike.main
 ```
 
-The service listens on `http://localhost:8000`. It needs about **150 seconds to warm up** — the fast volatility horizon is a 30-second EWMA, so `warmup_complete` stays false until it has enough samples. Check readiness:
+The service listens on `http://localhost:8000`.
+
+**Two different readiness notions, worth not confusing.** `warmup_complete` flips to `true` within a couple of seconds — it means both volatility horizons hold an estimate (the slow one is seeded from klines at boot, the fast one after its first sample). What takes longer is the 30-second fast EWMA *converging* to a stable value: allow roughly **150 seconds** before `v_ratio` and the regime score are trustworthy. Check both:
 
 ```bash
 curl -s localhost:8000/api/v1/regime?symbol=BTCUSDT
@@ -265,6 +267,8 @@ Fitting uses batch gradient descent on pinball loss with Polyak–Ruppert tail a
 
 ## API
 
+**How to run and call the backend, with real captured responses: [`docs/USAGE.md`](docs/USAGE.md).**
+
 Full contract, message schemas and literal example payloads: [`docs/api/README.md`](docs/api/README.md) and [`docs/api/examples/`](docs/api/examples/).
 
 ### REST — `/api/v1`
@@ -407,6 +411,7 @@ marketspike/
 
 docs/
 ├── api/          frozen contract + literal example payloads
+├── USAGE.md      how to run and call the backend
 ├── DEMO.md       demo script and pre-flight checklist
 └── design/       design spec and implementation plan
 ```

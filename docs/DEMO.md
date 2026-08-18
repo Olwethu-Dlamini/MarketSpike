@@ -33,7 +33,7 @@ Work down this list **before** the event, not on the morning.
 
 ### T-minus minutes
 
-- [ ] Service started **at least 150 seconds** before you present. `warmup_complete` must be `true`:
+- [ ] Service started **at least 150 seconds** before you present. `warmup_complete` goes `true` within seconds, but that only means both horizons hold an estimate — the 30 s fast EWMA needs ~150 s to converge before `v_ratio` is trustworthy:
       `curl -s localhost:8000/api/v1/regime?symbol=BTCUSDT`
 - [ ] `/health` shows every configured feed `connected: true` and `recorder_dropped_total: 0`.
 - [ ] `/scenarios` lists your replay file.
@@ -180,7 +180,8 @@ See *Known limitations* in the README. Briefly: FX conversion is identity (corre
 
 | Symptom | Cause | Response |
 |---|---|---|
-| `warmup_complete: false` | Started under ~150 s ago | The fast horizon is a 30 s EWMA. Talk through the architecture while it warms. |
+| `warmup_complete: false` | Started seconds ago, or the kline seed call failed | Normally true within seconds. If it stays false, check the startup log for the `seeded ... slow variance` line. |
+| `v_ratio` swinging wildly | Fast EWMA not yet converged | Needs ~150 s (5x the 30 s horizon). Talk through the architecture while it settles. |
 | `v_ratio` near zero, regime stuck NORMAL | Genuinely calm market | Expected. `log₂(V)` clamps below V=1 by design — the signal fires only above baseline. Switch to replay. |
 | EURUSD shows `MARKET_CLOSED` | Weekend or out of session | Normal operating state, not an error. Present BTCUSDT. |
 | `overexposure_pct` near 0 | Calm regime, wide stop | Correct behaviour. Use a tighter stop, or trigger the replay spike. |
