@@ -1,0 +1,10 @@
+{
+  "EURUSD":  {"pip_size": 0.0001, "contract_size": 100000, "quote_ccy": "USD",
+              "min_lot": 0.01, "lot_step": 0.01, "margin_rate": 0.0333},
+  "USDJPY":  {"pip_size": 0.01,   "contract_size": 100000, "quote_ccy": "JPY",
+              "min_lot": 0.01, "lot_step": 0.01, "margin_rate": 0.0333},
+  "XAUUSD":  {"pip_size": 0.01,   "contract_size": 100,    "quote_ccy": "USD",
+              "min_lot": 0.01, "lot_step": 0.01, "margin_rate": 0.05},
+  "BTCUSDT": {"pip_size": 1.0,    "contract_size": 1,      "quote_ccy": "USDT",
+              "min_lot": 0.0001, "lot_step": 0.0001, "margin_rate": 0.10}
+}

@@ -3,6 +3,8 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Query
 
+from marketspike.risk.instruments import all_instruments
+
 router = APIRouter(prefix="/api/v1")
 
 
@@ -62,6 +64,22 @@ def health() -> Dict[str, Any]:
         "counters": counters,
         "model": state.get("model_sources", {}),
         "mode": state.get("mode", "live"),
+    }
+
+
+@router.get("/instruments")
+def instruments() -> Dict[str, Any]:
+    return {
+        "v": 1,
+        "instruments": [
+            {
+                "symbol": spec.symbol, "pip_size": spec.pip_size,
+                "contract_size": spec.contract_size, "quote_ccy": spec.quote_ccy,
+                "min_lot": spec.min_lot, "lot_step": spec.lot_step,
+                "margin_rate": spec.margin_rate,
+            }
+            for spec in all_instruments()
+        ],
     }
 
 
