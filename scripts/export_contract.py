@@ -1,13 +1,8 @@
-"""Generate docs/api/openapi.json and docs/api/examples/*.json from the models."""
+"""Generate example payloads in docs/api/examples/*.json from the models."""
 import json
 import pathlib
-import sys
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from marketspike.api import schemas  # noqa: E402
+from marketspike.api import schemas
 
 OUT = pathlib.Path("docs/api")
 EX = OUT / "examples"

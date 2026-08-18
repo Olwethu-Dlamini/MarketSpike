@@ -21,7 +21,20 @@ MODEL_FOR_TYPE = {
 
 
 def test_examples_directory_is_populated():
-    assert list(EXAMPLES.glob("*.json")), "run scripts/export_contract.py"
+    frame_files = sorted(EXAMPLES.glob("frame_*.json"))
+    expected_count = len(MODEL_FOR_TYPE)
+    assert len(frame_files) == expected_count, (
+        f"Expected {expected_count} frame examples, found {len(frame_files)}. "
+        f"Run scripts/export_contract.py"
+    )
+    expected_names = {f"frame_{name}.json" for name in MODEL_FOR_TYPE.keys()}
+    actual_names = {f.name for f in frame_files}
+    assert actual_names == expected_names, (
+        f"Frame filenames mismatch. Expected {expected_names}, got {actual_names}"
+    )
+    # Also verify the two non-frame examples exist
+    assert (EXAMPLES / "size_request.json").exists(), "Missing size_request.json"
+    assert (EXAMPLES / "size_response.json").exists(), "Missing size_response.json"
 
 
 @pytest.mark.parametrize("path", sorted(EXAMPLES.glob("frame_*.json")))

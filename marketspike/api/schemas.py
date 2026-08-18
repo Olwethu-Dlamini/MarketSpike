@@ -147,6 +147,8 @@ class SizeResponse(BaseModel):
     warnings: List[str] = Field(default_factory=list)
     inputs_echo: Dict[str, Any] = Field(default_factory=dict)
 
+    model_config = {"protected_namespaces": ()}
+
 
 class FeedHealth(BaseModel):
     venue: str
@@ -165,3 +167,5 @@ class HealthResponse(BaseModel):
     counters: Dict[str, int]
     model: Dict[str, str]
     mode: str
+
+    model_config = {"protected_namespaces": ()}
