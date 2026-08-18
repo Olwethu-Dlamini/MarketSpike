@@ -19,7 +19,14 @@ in CI by `tests/test_contract.py`.
 ## Client → server frames
 
     {"type":"subscribe","symbols":["BTCUSDT","EURUSD"],
-     "channels":["tick","regime","latency","event"]}
+     "channels":["tick","regime","latency","event","market","replay"]}
     {"type":"unsubscribe","symbols":["EURUSD"]}
     {"type":"clock_sync","client_send_ns":1723891200123456789}
     {"type":"ack","seq":4471,"client_recv_ns":1723891200987654321}
+
+The full channel set is `tick`, `regime`, `latency`, `event`, `market`, and
+`replay` (the last two gate `market_state` and `replay_state` frames).
+Omitting a channel from `subscribe` now suppresses frames on that channel —
+including `market`/`replay`, which used to be delivered unconditionally.
+Frame types with no channel (e.g. `hello`, `clock_sync_reply`, `error`) are
+always delivered and are unaffected by this filter.
