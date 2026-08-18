@@ -172,7 +172,15 @@ def _make_ingest(adapter, engine: SymbolEngine, recorder: Recorder):
 
 @app.on_event("shutdown")
 async def shutdown() -> None:
-    tasks = STATE.get("tasks") or []
+    tasks = list(STATE.get("tasks") or [])
+    # The replay driver (started on demand by POST /replay/start) is not
+    # part of the startup()-managed task list, so it needs its own explicit
+    # cancellation here -- otherwise a replay left running at shutdown would
+    # be silently abandoned rather than cancelled and awaited like every
+    # other long-lived task.
+    replay_task = STATE.get("replay_task")
+    if replay_task is not None:
+        tasks.append(replay_task)
     for task in tasks:
         task.cancel()
     if tasks:

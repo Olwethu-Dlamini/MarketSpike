@@ -1,3 +1,4 @@
+import asyncio
 import math
 import time
 from typing import Any, Dict
@@ -5,10 +6,17 @@ from typing import Any, Dict
 from fastapi import APIRouter, HTTPException, Query
 
 from marketspike.api.schemas import SizeRequest
+from marketspike.feeds.replay import ReplayAdapter, list_scenarios
 from marketspike.risk.instruments import all_instruments, get_instrument
 from marketspike.risk.sizing import SizingContext, size_position
 
 router = APIRouter(prefix="/api/v1")
+
+# Cap on how often a running replay publishes its own "replay_state" frame:
+# the same rationale as SymbolEngine's tick-frame rate cap (spec §12.3) --
+# a browser cannot render progress updates at tick rate and trying to
+# inflates delivery latency for no benefit.
+REPLAY_STATE_MIN_INTERVAL_NS = 200_000_000
 
 
 def _state() -> Dict[str, Any]:
@@ -167,6 +175,86 @@ def _problem(status: int, slug: str, title: str, detail: str, instance: str) -> 
             "status": status, "detail": detail, "instance": instance,
         },
     )
+
+
+@router.get("/scenarios")
+def scenarios() -> Dict[str, Any]:
+    return {"v": 1, "scenarios": list_scenarios("scenarios")}
+
+
+def _publish_replay_state(bus, adapter: ReplayAdapter, mode: str) -> None:
+    if bus is None:
+        return
+    bus.publish(
+        {
+            "v": 1, "seq": bus.next_seq(), "server_ts_ns": time.time_ns(),
+            "type": "replay_state", "mode": mode, "scenario": adapter.scenario,
+            "progress_pct": adapter.progress_pct, "source": "simulated",
+        }
+    )
+
+
+@router.post("/replay/start")
+def replay_start(body: Dict[str, Any]) -> Dict[str, Any]:
+    state = _state()
+    scenario = body.get("scenario")
+    symbol = body.get("symbol", "EURUSD")
+    speed = float(body.get("speed", 1.0))
+
+    if not scenario or scenario not in list_scenarios("scenarios"):
+        raise _problem(404, "unknown-scenario", "Unknown scenario",
+                       "{0} is not available".format(scenario), "/api/v1/replay/start")
+
+    engine = state.get("engines", {}).get(symbol)
+    if engine is None:
+        raise _problem(404, "unknown-symbol", "Unknown symbol",
+                       "{0} is not an active symbol".format(symbol),
+                       "/api/v1/replay/start")
+
+    existing = state.get("replay_task")
+    if existing is not None:
+        existing.cancel()
+
+    path = "scenarios/{0}.ndjson".format(scenario)
+    adapter = ReplayAdapter(symbol, path, speed=speed)
+    bus = state.get("bus")
+
+    async def drive() -> None:
+        last_published_ns = 0
+        _publish_replay_state(bus, adapter, "replay")
+        try:
+            async for tick in adapter.stream():
+                engine.on_tick(tick)
+                now_ns = time.time_ns()
+                if now_ns - last_published_ns >= REPLAY_STATE_MIN_INTERVAL_NS:
+                    last_published_ns = now_ns
+                    _publish_replay_state(bus, adapter, "replay")
+        finally:
+            # Reached whether the scenario plays out to completion or the
+            # task is cancelled (via /replay/stop or a new /replay/start) --
+            # either way the system must not be left reporting mode=="replay"
+            # once nothing is actually replaying.
+            _publish_replay_state(bus, adapter, "live")
+            state["mode"] = "live"
+            state["replay_task"] = None
+            state["replay_adapter"] = None
+
+    state["mode"] = "replay"
+    state["replay_adapter"] = adapter
+    state["replay_task"] = asyncio.ensure_future(drive())
+    return {"v": 1, "mode": "replay", "scenario": scenario, "symbol": symbol, "speed": speed}
+
+
+@router.post("/replay/stop")
+def replay_stop() -> Dict[str, Any]:
+    state = _state()
+    task = state.get("replay_task")
+    if task is not None:
+        task.cancel()
+    state["replay_task"] = None
+    state["replay_adapter"] = None
+    state["mode"] = "live"
+    return {"v": 1, "mode": "live"}
 
 
 def _features(engine, latency_ms: float) -> Dict[str, float]:
