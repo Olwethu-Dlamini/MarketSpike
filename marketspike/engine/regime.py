@@ -41,10 +41,18 @@ class RegimeFSM:
         """Used for MARKET_CLOSED, which is driven by tradeability not price."""
         self.state = state
         self.entered_ns = ts_ns
+        self.last_trigger = "forced"
         self._since.clear()
 
-    def update(self, ts_ns: int, score: float) -> Optional[str]:
-        """Return the new state if a transition fired, else None."""
+    def update(self, ts_ns: int, score: float, trigger: Optional[str] = None) -> Optional[str]:
+        """Return the new state if a transition fired, else None.
+
+        `trigger` lets the caller supply honest attribution (e.g. from
+        `scoring.dominant_signal`) for an "above" transition, since such a
+        transition may be driven by either signal. A "below" transition is
+        always "decay" -- a downward move is genuinely decay regardless of
+        which signal fell, so `trigger` is ignored in that direction.
+        """
         for transition in self._transitions.get(self.state, []):
             if transition.direction == "above":
                 met = score >= transition.threshold
@@ -59,9 +67,10 @@ class RegimeFSM:
             if (ts_ns - started) >= transition.dwell_s * 1_000_000_000:
                 self.state = transition.to
                 self.entered_ns = ts_ns
-                self.last_trigger = (
-                    "vol_ratio" if transition.direction == "above" else "decay"
-                )
+                if transition.direction == "above":
+                    self.last_trigger = trigger if trigger is not None else "vol_ratio"
+                else:
+                    self.last_trigger = "decay"
                 self._since.clear()
                 return transition.to
         return None
