@@ -210,7 +210,7 @@ def test_apply_schema_is_idempotent(tmp_path):
     conn = open_db(str(tmp_path / "t.db"))
     apply_schema(conn)
     apply_schema(conn)
-    rows = list(conn.execute("SELECT version FROM schema_version"))
+    rows = [tuple(row) for row in conn.execute("SELECT version FROM schema_version")]
     assert rows == [(SCHEMA_VERSION,)]
 
 
