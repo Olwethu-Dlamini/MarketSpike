@@ -6,10 +6,12 @@ from typing import Dict, List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from marketspike.api import rest as rest_api
 from marketspike.api import ws as ws_api
 from marketspike.config import get_settings
 from marketspike.engine.bus import Bus
 from marketspike.engine.supervisor import supervise
+from marketspike.engine.symbol_state import SymbolEngine
 from marketspike.feeds.binance import BinanceAdapter
 from marketspike.feeds.oanda import OandaAdapter
 from marketspike.store.db import apply_schema, open_db
@@ -33,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(ws_api.router)
+app.include_router(rest_api.router)
 
 STATE: Dict[str, object] = {"started_ns": 0, "adapters": {}, "tasks": []}
 
@@ -74,6 +77,15 @@ async def startup() -> None:
     STATE["recorder"] = recorder
     STATE["adapters"] = adapters
 
+    engines = {}
+    for symbol, adapter in adapters.items():
+        engines[symbol] = SymbolEngine(
+            symbol=symbol, bus=STATE["bus"], recorder=recorder,
+            tau_fast_s=settings.tau_fast_s, tau_slow_s=settings.tau_slow_s,
+            skew_window_s=settings.skew_window_s, ws_max_hz=settings.ws_max_hz,
+        )
+    STATE["engines"] = engines
+
     tasks: List[asyncio.Future] = [
         asyncio.ensure_future(supervise("recorder", recorder.run))
     ]
@@ -82,7 +94,7 @@ async def startup() -> None:
             asyncio.ensure_future(
                 supervise(
                     "feed:{0}".format(symbol),
-                    _make_ingest(adapter, recorder),
+                    _make_ingest(adapter, engines[symbol], recorder),
                 )
             )
         )
@@ -90,10 +102,19 @@ async def startup() -> None:
     LOGGER.info("started with symbols=%s", list(adapters))
 
 
-def _make_ingest(adapter, recorder: Recorder):
+def _make_ingest(adapter, engine: SymbolEngine, recorder: Recorder):
     async def ingest() -> None:
+        baseline = await adapter.seed_baseline()
+        if baseline:
+            engine.seed(baseline)
+            LOGGER.info("seeded %s slow variance at %.3e", adapter.symbol, baseline)
+        else:
+            LOGGER.warning(
+                "no baseline for %s; ratios are unreliable until warm",
+                adapter.symbol,
+            )
         async for tick in adapter.stream():
-            recorder.submit_tick(tick, excess_transit_us=0, engine_us=0)
+            engine.on_tick(tick)
 
     return ingest
 
