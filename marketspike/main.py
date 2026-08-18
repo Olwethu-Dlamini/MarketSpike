@@ -83,6 +83,7 @@ async def startup() -> None:
             symbol=symbol, bus=STATE["bus"], recorder=recorder,
             tau_fast_s=settings.tau_fast_s, tau_slow_s=settings.tau_slow_s,
             skew_window_s=settings.skew_window_s, ws_max_hz=settings.ws_max_hz,
+            vol_sample_interval_s=settings.vol_sample_interval_s,
         )
     STATE["engines"] = engines
 

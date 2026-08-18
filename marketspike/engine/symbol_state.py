@@ -38,12 +38,13 @@ class SymbolEngine:
         tau_slow_s: float = 1800.0,
         skew_window_s: float = 60.0,
         ws_max_hz: float = 20.0,
+        vol_sample_interval_s: float = 1.0,
     ) -> None:
         self.symbol = symbol
         self.bus = bus
         self.recorder = recorder
         self.timer = PipelineTimer(skew_window_s=skew_window_s)
-        self.vol = VolatilityPair(tau_fast_s, tau_slow_s)
+        self.vol = VolatilityPair(tau_fast_s, tau_slow_s, vol_sample_interval_s)
         self.spread = SpreadTracker()
         self.fsm = RegimeFSM()
         self.event_context = "CLEAR"

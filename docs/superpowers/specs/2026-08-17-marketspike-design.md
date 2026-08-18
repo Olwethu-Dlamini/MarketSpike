@@ -407,6 +407,37 @@ Dividing by `Δt` normalises to a variance *rate* — variance per second — ma
 
 Two horizons: **τ_fast = 30 s**, **τ_slow = 30 min**.
 
+### 7.1a Sampling cadence — a corrected note
+
+An earlier revision of this section claimed the fast and slow horizons were biased ~0.5x
+relative to each other by sampling scale, and mandated a 1-second sampling grid to fix it.
+**That claim was wrong and is retracted.**
+
+The evidence came from an equal-weighted batch mean of `r²/Δt` over recorded ticks, giving
+0.507 against the kline baseline. That statistic is not what the EWMA computes. With
+`λ = exp(−Δt/τ)`, a sample's weight is `(1 − λ) ≈ Δt/τ`, so a 5 ms sample carries roughly
+1.7e-4 of the weight of a 1 s sample. **The EWMA is already a proper time-weighted average,
+unbiased with respect to sampling density** — which is exactly what the `r²/Δt` normalisation
+in §7.1 achieves. The equal-weighted diagnostic was itself the biased estimator, giving full
+weight to the many sub-millisecond pairs whose returns quantise to zero.
+
+Replaying 18,100 recorded BTCUSDT ticks through the real estimator confirms it:
+
+| `min_sample_interval_s` | accepted samples | fast σ/s | final V |
+|---|---|---|---|
+| 1.0 (gated) | 258 | 4.1709e-05 | 1.273 |
+| 0.0 (per-tick) | 18,100 | 4.1480e-05 | 1.276 |
+
+**The gate is retained** because it costs nothing in accuracy and cuts work on the volatility
+path by roughly 70x. It is a performance measure, not a correctness fix. Configurable via
+`MS_VOL_SAMPLE_INTERVAL_S`; it lives inside `VolatilityPair` so the offline recompute in
+`ml/train.py` (§9.8) samples identically to serving.
+
+Observed `V` on live BTCUSDT ranges roughly 0.23–1.28 under ordinary conditions. Values below
+1.0 clamp the volatility term to zero by design (§7.4): the signal contributes only when
+current volatility *exceeds* its own trailing baseline. During a high-impact release
+(V ≈ 3–5) it contributes 1.0–1.4 after weighting, which is what carries the score to ELEVATED.
+
 ```
 V = σ_fast / σ_slow
 ```

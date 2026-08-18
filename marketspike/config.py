@@ -15,6 +15,7 @@ class Settings:
     oanda_account_id: Optional[str] = None
     tau_fast_s: float = 30.0
     tau_slow_s: float = 1800.0
+    vol_sample_interval_s: float = 1.0
     skew_window_s: float = 60.0
     ws_max_hz: float = 20.0
     model_path: str = "./model.json"
@@ -29,6 +30,7 @@ def get_settings() -> Settings:
         oanda_account_id=os.getenv("MS_OANDA_ACCOUNT_ID") or None,
         tau_fast_s=float(os.getenv("MS_TAU_FAST_S", "30")),
         tau_slow_s=float(os.getenv("MS_TAU_SLOW_S", "1800")),
+        vol_sample_interval_s=float(os.getenv("MS_VOL_SAMPLE_INTERVAL_S", "1.0")),
         skew_window_s=float(os.getenv("MS_SKEW_WINDOW_S", "60")),
         ws_max_hz=float(os.getenv("MS_WS_MAX_HZ", "20")),
         model_path=os.getenv("MS_MODEL_PATH", "./model.json"),
