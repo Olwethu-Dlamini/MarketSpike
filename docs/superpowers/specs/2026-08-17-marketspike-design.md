@@ -85,7 +85,7 @@ Two symbols, deliberately chosen for complementary properties.
 | Role | Demo reliability — always live | Thesis credibility — the pair the pitch is about |
 | Transport | WebSocket | HTTP/1.1 chunked NDJSON |
 | Auth | None | Bearer token (free practice account) |
-| Venue timestamp | `E` (ms) | `time` (RFC3339, ns) |
+| Venue timestamp | via `depth@100ms` side-channel (§3.2) | `time` (RFC3339, ns) |
 | Top-of-book qty | Yes (`B`, `A`) | Yes (`liquidity`) |
 
 ### 3.1 Why both, and why not forex alone
@@ -106,11 +106,27 @@ No API key. Message:
 
 ```json
 {"stream":"btcusdt@bookTicker","data":{
-  "u":400900217,"s":"BTCUSDT","E":1723891200123,
+  "u":400900217,"s":"BTCUSDT",
   "b":"63120.50","B":"1.234","a":"63121.90","A":"0.876"}}
 ```
 
-`E` is the venue event time in milliseconds — this is what makes transit measurement possible at all. `B` and `A` give top-of-book quantities, which feed the `book_imbalance` feature at no extra cost.
+`B` and `A` give top-of-book quantities, which feed the `book_imbalance` feature at no extra cost.
+
+**`bookTicker` carries no venue event time.** This was verified empirically against the live venue, and it contradicts an earlier draft of this section which assumed an `E` field:
+
+| Stream | Keys | Venue timestamp |
+|---|---|---|
+| `btcusdt@bookTicker` | `A B a b s u` | **absent** |
+| `btcusdt@depth20@100ms` | `asks bids lastUpdateId` | absent |
+| `btcusdt@depth@100ms` | `E U a b e s u` | **present** |
+
+Without a venue timestamp, `excess_transit_us` (§6.2) would be identically zero for BTCUSDT and the latency waterfall would show only engine time — on the one symbol guaranteed to be live during judging.
+
+**Resolution — a timing side-channel.** Subscribe to **both** `btcusdt@bookTicker` and `btcusdt@depth@100ms` on a single combined WebSocket. `bookTicker` drives ticks and prices as before; the depth frames are read **solely** for their `E` field and otherwise discarded. No order-book snapshot, no diff application, no book maintenance.
+
+This is legitimate rather than a workaround: **transit latency is a property of the connection, not of an individual quote.** Both streams traverse the same TCP connection to the same venue endpoint, so a 10 Hz timing sample characterises the path the quotes travel. The adapter records the raw transit measured on each depth frame and applies it to the ticks that follow, so the skew estimator observes genuinely measured values while `recv_ts_ns` stays exactly truthful.
+
+EURUSD is unaffected — OANDA's `time` field is a real venue timestamp at nanosecond precision (§3.3).
 
 **Baseline volatility seeding** (§7.2) uses one unauthenticated REST call:
 ```
