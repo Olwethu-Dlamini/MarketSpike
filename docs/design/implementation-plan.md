@@ -1,6 +1,12 @@
 # MarketSpike Backend Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ⚠️ **Historical document.** This is the plan as written *before* implementation, kept
+> for provenance. **Do not use it as a code reference** — several interfaces changed during
+> the build (`PipelineTimer.on_processed` gained a third argument, `RegimeFSM.update` gained
+> `trigger`, tests use `Subscription.drain()` rather than the private `_queue`, and the
+> training solver was replaced). For how the system actually works, read
+> [`../ARCHITECTURE.md`](../ARCHITECTURE.md); for what changed and why, see Appendix A of
+> [`design-spec.md`](design-spec.md).
 
 **Goal:** Build the MarketSpike backend — a FastAPI service that ingests live BTCUSDT and EURUSD quotes, measures real pipeline latency with clock-skew correction, detects volatility regimes, and returns slippage-aware position sizes over a frozen REST/WebSocket contract.
 
@@ -8,7 +14,7 @@
 
 **Tech Stack:** Python 3.8+, FastAPI, uvicorn, `websockets`, `httpx`, Pydantic v2, SQLite (WAL), scikit-learn (offline training only), pytest + pytest-asyncio.
 
-**Spec:** `docs/superpowers/specs/2026-08-17-marketspike-design.md` — section references below (§N) point into it.
+**Spec:** [`design-spec.md`](design-spec.md) — section references below (§N) point into it.
 
 ## Global Constraints
 

@@ -4,7 +4,7 @@
 |---|---|
 | **Version** | 1.0 |
 | **Date** | 2026-08-17 |
-| **Status** | Approved — ready for implementation planning |
+| **Status** | **Implemented and deployed.** This document is the design rationale as approved *before* build; §A records where the built system diverged. |
 | **Repository** | `github.com/Olwethu-Dlamini/MarketSpike` |
 | **Backend owner** | Olwethu Dlamini |
 | **Frontend** | Teammate(s) — build against §12, frozen |
@@ -615,7 +615,10 @@ Linear is correct on every axis that matters here:
 - Structurally resistant to overfitting on this feature count
 - **Inference is a dot product** — ships as a ~2 KB `model.json`, runs inline in the hot path, requires no model server and no ML runtime dependency on demo day
 
-Fitted with `sklearn.QuantileRegressor`; served as pure-Python arithmetic.
+Fitted with batch gradient descent on pinball loss (numpy, with Polyak–Ruppert tail
+averaging); served as pure-Python arithmetic. **This changed during the build** —
+`sklearn.QuantileRegressor` was the original choice but measured ~O(n^1.7), making
+the overnight-record-then-train workflow of §9.8 impossible. See §A.
 
 ### 9.6 Baseline
 
@@ -1247,3 +1250,54 @@ Recorded so the design decisions are traceable.
 | **MAD** | Median absolute deviation — outlier-robust dispersion estimator |
 | **EWMA** | Exponentially weighted moving average |
 | **WAL** | Write-ahead logging — SQLite mode permitting concurrent read during write |
+
+
+---
+
+## Appendix A — Where the built system diverged from this design
+
+This spec was written before implementation. The following decisions were made *during*
+the build, each in response to something measured rather than anticipated. They are
+authoritative over the body of this document where they conflict.
+
+**A1 — Binance `bookTicker` carries no venue timestamp.** §3.2 originally assumed an `E`
+field. Verified against the live venue, its keys are `A B a b s u`. Without a venue
+timestamp, `excess_transit_us` would be identically zero on the one symbol guaranteed to
+be live during a demo. Resolved by subscribing additionally to `depth@100ms` purely as a
+timing side-channel. §3.1/§3.2 were rewritten.
+
+**A2 — The volatility sampling-bias claim was wrong and is retracted.** An intermediate
+revision asserted a ~0.5× cross-horizon sampling bias and mandated a 1-second sampling
+grid. That was measured with an equal-weighted batch mean of `r²/Δt`, which is not what
+the EWMA computes — with `λ = exp(−Δt/τ)` the EWMA is already time-weighted and unbiased
+with respect to sampling density. The gate was retained purely as a ~70× CPU saving.
+See §7.1a.
+
+**A3 — Quantile crossing.** Fitting quantiles independently produced `p95 < p50` for
+3.0% of training samples, and for the fallback priors it occurred at `v_ratio` values
+observed live. Left unrepaired, the *conservative* sizing path could recommend a larger
+position than the typical one, and `overexposure_pct` — the headline number — could read
+zero. Repaired at inference with `p95 = max(p95_raw, p50_raw)`.
+
+**A4 — Fallback priors are split by asset class.** A single set of coefficients cannot
+serve both, because BTCUSDT's spread (~0.00156 bps) is roughly 770× tighter in relative
+terms than EURUSD's (~1.2 bps). FX-scale priors drove crypto predictions negative. Crypto
+priors were calibrated against measured ground truth: realised cost p50 0.00078 bps,
+p95 0.20642 bps.
+
+**A5 — Training solver replaced.** `sklearn.QuantileRegressor` scales ~O(n^1.7): 5.9 s at
+8k samples, ~3.5 min at 54k, extrapolating to ~6 hours at the 1M rows §9.8 anticipates.
+Replaced with numpy gradient descent — 343k samples in 49 s. Trade-off recorded honestly:
+~9% higher pinball loss than the LP solve, but materially better calibrated (p95 coverage
+0.048 against nominal 0.05, versus 0.017).
+
+**A6 — REST routes run on a threadpool, and that caused a production bug.** Not
+anticipated by this design at all. FastAPI runs `def` routes in a worker threadpool while
+the engine mutates state on the event loop, so any route iterating an engine collection
+races it. This shipped and produced consistent 500s on the deployed instance, which sees
+~127 ticks/s against ~16 locally. Fixed with locks on `LatencyAggregator._samples` and
+`SymbolEngine._price_history`. See `docs/ARCHITECTURE.md` §5.
+
+**A7 — Deployment.** Not in the original scope. The service is deployed to Render at
+`https://marketspike.onrender.com`; see `docs/DEPLOY.md`. `PORT` and CORS origins became
+runtime configuration.

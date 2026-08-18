@@ -273,6 +273,8 @@ Fitting uses batch gradient descent on pinball loss with Polyak–Ruppert tail a
 
 ## API
 
+**How the backend works internally, for contributors: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).**
+
 **How to run and call the backend, with real captured responses: [`docs/USAGE.md`](docs/USAGE.md).**
 
 **Hosting it on Render: [`docs/DEPLOY.md`](docs/DEPLOY.md).**
@@ -419,13 +421,14 @@ marketspike/
 
 docs/
 ├── api/          frozen contract + literal example payloads
+├── ARCHITECTURE.md  how the backend works, for contributors
 ├── USAGE.md      how to run and call the backend
 ├── DEPLOY.md     hosting on Render, for beginners
 ├── DEMO.md       demo script and pre-flight checklist
 └── design/       design spec and implementation plan
 ```
 
-Design rationale and the full quantitative derivation: [`docs/design/design-spec.md`](docs/design/design-spec.md).
+Design rationale and the full quantitative derivation: [`docs/design/design-spec.md`](docs/design/design-spec.md) — its Appendix A records where the built system diverged from the original design, and why.
 
 ---
 
