@@ -14,6 +14,7 @@ from marketspike.engine.supervisor import supervise
 from marketspike.engine.symbol_state import SymbolEngine
 from marketspike.feeds.binance import BinanceAdapter
 from marketspike.feeds.oanda import OandaAdapter
+from marketspike.risk.slippage import resolve_models
 from marketspike.store.db import apply_schema, open_db
 from marketspike.store.recorder import Recorder
 
@@ -86,6 +87,10 @@ async def startup() -> None:
             vol_sample_interval_s=settings.vol_sample_interval_s,
         )
     STATE["engines"] = engines
+
+    models = resolve_models(settings.model_path, list(adapters.keys()))
+    STATE["models"] = models
+    STATE["model_sources"] = {s: m.source for s, m in models.items()}
 
     tasks: List[asyncio.Future] = [
         asyncio.ensure_future(supervise("recorder", recorder.run))

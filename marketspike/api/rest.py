@@ -1,9 +1,12 @@
+import math
 import time
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Query
 
-from marketspike.risk.instruments import all_instruments
+from marketspike.api.schemas import SizeRequest
+from marketspike.risk.instruments import all_instruments, get_instrument
+from marketspike.risk.sizing import SizingContext, size_position
 
 router = APIRouter(prefix="/api/v1")
 
@@ -112,3 +115,113 @@ def latency_summary(symbol: str = Query(...)) -> Dict[str, Any]:
         "baseline_includes_clock_offset": True,
         "source": "estimated",
     }
+
+
+def _problem(status: int, slug: str, title: str, detail: str, instance: str) -> HTTPException:
+    return HTTPException(
+        status_code=status,
+        detail={
+            "type": "/errors/{0}".format(slug), "title": title,
+            "status": status, "detail": detail, "instance": instance,
+        },
+    )
+
+
+def _features(engine, latency_ms: float) -> Dict[str, float]:
+    tick = engine.last_tick if engine else None
+    v_ratio = (engine.v_ratio if engine else None) or 1.0
+    spread_bps = tick.spread_bps if tick else 1.0
+    return {
+        "log_v_ratio": math.log(max(v_ratio, 1e-9)),
+        "spread_z": engine.spread_z if engine else 0.0,
+        "log_spread_bps": math.log(max(spread_bps, 1e-6)),
+        "log_latency_ms": math.log(max(latency_ms, 1e-3)),
+        "quote_rate_hz": engine.quote_rate_hz if engine else 0.0,
+        "book_imbalance": tick.book_imbalance if tick else 0.0,
+        # Task 18 wire-up point: the economic calendar will replace this
+        # constant with a real signed seconds-to-next-event value. Until
+        # then we use 1800.0 -- the calendar's clipped "no event nearby"
+        # sentinel -- rather than 0.0, which would mean "an event is
+        # happening right now" and would train/serve-skew every quote.
+        "signed_secs_to_event": 1800.0,
+        "in_event_window": 1.0 if (engine and engine.event_context == "EVENT_WINDOW") else 0.0,
+        # Read from the engine's rolling price buffer (never hardcoded),
+        # so this matches exactly what the ML training path computes.
+        "abs_return_5s": engine.abs_return_5s if engine else 0.0,
+    }
+
+
+@router.post("/size")
+def size(request: SizeRequest) -> Dict[str, Any]:
+    if request.risk_pct <= 0 or request.risk_pct > 100:
+        raise _problem(422, "invalid-risk", "Invalid risk percentage",
+                       "risk_pct must be in (0, 100]", "/api/v1/size")
+    if request.stop_distance_price <= 0:
+        raise _problem(422, "invalid-stop", "Invalid stop distance",
+                       "stop_distance_price must be positive", "/api/v1/size")
+    try:
+        spec = get_instrument(request.symbol)
+    except KeyError:
+        raise _problem(404, "unknown-symbol", "Unknown symbol",
+                       "{0} is not in the instrument registry".format(request.symbol),
+                       "/api/v1/size")
+
+    state = _state()
+    engine = state.get("engines", {}).get(request.symbol)
+    model = state.get("models", {}).get(request.symbol)
+    if model is None:
+        from marketspike.risk.slippage import fallback_model
+
+        model = fallback_model(request.symbol)
+
+    tick = engine.last_tick if engine else None
+    price = tick.mid if tick else 1.0
+    now_ns = time.time_ns()
+    stale = tick is None or (now_ns - tick.recv_ts_ns) > 120 * 1_000_000_000
+
+    if request.assumed_latency_ms is not None:
+        latency_ms = float(request.assumed_latency_ms)
+        latency_source = "estimated"
+    elif engine is not None:
+        p50_us = engine.timer.total.percentiles(now_ns)[0]
+        latency_ms = p50_us / 1000.0
+        latency_source = "measured"
+    else:
+        latency_ms = 50.0
+        latency_source = "estimated"
+
+    features = _features(engine, latency_ms)
+    context = SizingContext(
+        price=price,
+        fx_rate=1.0 if spec.quote_ccy in (request.account_ccy, "USDT") else 1.0,
+        fx_assumed=spec.quote_ccy not in (request.account_ccy, "USDT"),
+        regime=engine.fsm.state if engine else "UNKNOWN",
+        event_context=engine.event_context if engine else "CLEAR",
+        latency_ms=latency_ms,
+        latency_source=latency_source,
+        stale_quote=stale,
+        model_source=model.source,
+        model_version=model.version,
+    )
+
+    predicted = model.predict_quantiles(features)
+    result = size_position(
+        request, spec,
+        predicted["p50"],
+        predicted["p95"],
+        context,
+    )
+
+    recorder = state.get("recorder")
+    conn = state.get("conn")
+    if conn is not None:
+        import json as _json
+
+        conn.execute(
+            "INSERT INTO calc_log (ts_ns, symbol, request_json, response_json, "
+            "regime, model_version) VALUES (?, ?, ?, ?, ?, ?)",
+            (now_ns, request.symbol, _json.dumps(request.model_dump()),
+             _json.dumps(result), context.regime, model.version),
+        )
+        conn.commit()
+    return result
