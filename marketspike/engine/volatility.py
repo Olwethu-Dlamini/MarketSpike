@@ -88,6 +88,12 @@ class VolatilityPair:
         self.slow.update(ts_ns, mid)
         fast_sigma = self.fast.sigma
         slow_sigma = self.slow.sigma
-        if not fast_sigma or not slow_sigma:
+        if fast_sigma is None or slow_sigma is None:
+            return None
+        # Degenerate baseline: if slow sigma is zero or negative, the ratio is
+        # undefined and we cannot compute it. This is a degenerate state of the
+        # estimator, not an "unready" state, so it does not trigger the None
+        # above which checks for actual uninitialization.
+        if slow_sigma <= 0.0:
             return None
         return fast_sigma / slow_sigma

@@ -91,3 +91,52 @@ def test_ratio_is_one_not_60_when_fast_and_slow_see_identical_path():
     assert abs(ratio - 1.0) < 0.05
     assert abs(ratio - 60.0) > 1.0
     assert abs(ratio - (1.0 / 60.0)) > 0.5
+
+
+def test_zero_fast_sigma_against_positive_slow_sigma_returns_zero():
+    """A zero fast sigma (from identical prices, log_return=0) against a
+    positive slow sigma is a legitimate ratio of 0.0, not None. It indicates
+    a calm market relative to the baseline. Previously this was swallowed by
+    truthiness check on fast_sigma."""
+    pair = VolatilityPair(tau_fast_s=1.0, tau_slow_s=60.0)
+    pair.seed_slow(1e-5)  # positive baseline
+    # Drive with identical mid prices (log_return = 0) to decay fast variance to ~0.
+    # Space ticks > MIN_DT_S (1ms) apart so they are processed.
+    ts, mid = 0, 100.0
+    for _ in range(100):
+        ts += int(0.01 * SECOND)  # 10ms apart
+        # mid stays the same, so log_return = 0
+        pair.update(ts, mid)
+    ratio = pair.update(ts + int(0.01 * SECOND), mid)
+    # Fast variance should have decayed to near-zero; slow remains at 1e-5.
+    # The ratio should be near 0.0, definitely not None.
+    assert ratio is not None, "Zero fast sigma should return 0.0, not None"
+    assert isinstance(ratio, float), f"Expected float, got {type(ratio)}"
+    # The ratio should be very close to 0.0 (within floating-point precision).
+    assert ratio < 1e-4, f"Expected ratio near 0.0, got {ratio}"
+
+
+def test_degenerate_slow_baseline_returns_none():
+    """If slow_sigma is 0.0 (a degenerate baseline), update() returns None
+    rather than raising ZeroDivisionError. This tests the edge case where the
+    baseline is legitimately zero."""
+    pair = VolatilityPair(tau_fast_s=1.0, tau_slow_s=60.0)
+    # Manually craft the state: seed slow at 0.0, fast at non-zero.
+    pair.slow.seed(0.0)
+    pair.fast.seed(1e-5)
+    # Call update; even though slow_sigma is 0.0, we should return None, not raise.
+    ratio = pair.update(0, 100.0)
+    assert ratio is None, "Degenerate slow baseline (slow_sigma=0.0) should return None"
+
+
+def test_fresh_pair_not_ready_and_returns_none():
+    """On a fresh VolatilityPair with no seeding and no ticks, ready is False
+    and update() returns None. They must agree: if not ready, update() returns None."""
+    pair = VolatilityPair(tau_fast_s=1.0, tau_slow_s=60.0)
+    assert pair.ready is False, "Fresh pair should not be ready"
+    # First update only sets _last_ts and _last_mid, does not compute variance.
+    ratio = pair.update(0, 100.0)
+    assert ratio is None, "First update on unready pair should return None"
+    # After one update, still not ready (need a second to compute log_return).
+    assert pair.ready is False, "Pair should still not be ready after first update"
+    assert pair.fast.ready is False and pair.slow.ready is False
