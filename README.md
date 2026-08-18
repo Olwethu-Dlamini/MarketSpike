@@ -269,6 +269,8 @@ Fitting uses batch gradient descent on pinball loss with Polyak–Ruppert tail a
 
 **How to run and call the backend, with real captured responses: [`docs/USAGE.md`](docs/USAGE.md).**
 
+**Hosting it on Render: [`docs/DEPLOY.md`](docs/DEPLOY.md).**
+
 Full contract, message schemas and literal example payloads: [`docs/api/README.md`](docs/api/README.md) and [`docs/api/examples/`](docs/api/examples/).
 
 ### REST — `/api/v1`
@@ -412,6 +414,7 @@ marketspike/
 docs/
 ├── api/          frozen contract + literal example payloads
 ├── USAGE.md      how to run and call the backend
+├── DEPLOY.md     hosting on Render, for beginners
 ├── DEMO.md       demo script and pre-flight checklist
 └── design/       design spec and implementation plan
 ```

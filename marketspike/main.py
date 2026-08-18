@@ -30,10 +30,7 @@ app = FastAPI(title="MarketSpike", version="1.0.0")
 # allow_credentials=True is rejected by browsers (spec appendix A, item 8).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000", "http://127.0.0.1:3000",
-        "http://localhost:5173", "http://127.0.0.1:5173",
-    ],
+    allow_origins=get_settings().cors_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
@@ -213,4 +210,4 @@ if __name__ == "__main__":
     # Passing the local `app` object would instead run the '__main__' copy,
     # whose STATE never gets startup()-populated, causing a KeyError at
     # connection time in api/ws.py.
-    uvicorn.run("marketspike.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run("marketspike.main:app", host="0.0.0.0", port=get_settings().port)

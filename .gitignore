@@ -8,8 +8,10 @@ venv/
 *.db-wal
 *.db-shm
 .pytest_cache/
-model.json
+# model.json is committed deliberately so the hosted service serves a trained
+# model instead of fallback priors. Retrain locally and commit the new file.
 scenarios/*.ndjson
+!scenarios/demo_*.ndjson
 *.egg-info/
 build/
 dist/

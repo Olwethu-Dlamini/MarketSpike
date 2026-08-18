@@ -20,6 +20,8 @@ class Settings:
     ws_max_hz: float = 20.0
     model_path: str = "./model.json"
     max_tick_age_hours: int = 0
+    port: int = 8000
+    cors_origins: List[str] = field(default_factory=list)
 
 
 def get_settings() -> Settings:
@@ -35,4 +37,15 @@ def get_settings() -> Settings:
         ws_max_hz=float(os.getenv("MS_WS_MAX_HZ", "20")),
         model_path=os.getenv("MS_MODEL_PATH", "./model.json"),
         max_tick_age_hours=int(os.getenv("MS_MAX_TICK_AGE_HOURS", "0")),
+        # Render (and most PaaS) assign the port at runtime via $PORT. Binding a
+        # hardcoded port there means the platform's health check never connects
+        # and the deploy is marked failed.
+        port=int(os.getenv("PORT") or os.getenv("MS_PORT") or "8000"),
+        cors_origins=_split(
+            os.getenv(
+                "MS_CORS_ORIGINS",
+                "http://localhost:3000,http://127.0.0.1:3000,"
+                "http://localhost:5173,http://127.0.0.1:5173",
+            )
+        ),
     )

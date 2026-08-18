@@ -1,0 +1,88 @@
+{
+  "models": {
+    "BTCUSDT": {
+      "version": "btcusdt-2026-08-18T10:27Z",
+      "trained_at_ns": 1787048832308747530,
+      "feature_order": [
+        "log_v_ratio",
+        "spread_z",
+        "log_spread_bps",
+        "log_latency_ms",
+        "quote_rate_hz",
+        "book_imbalance",
+        "signed_secs_to_event",
+        "in_event_window",
+        "abs_return_5s"
+      ],
+      "quantiles": {
+        "p50": {
+          "intercept": 0.0032402104929015307,
+          "coefficients": [
+            -0.0001821895348142792,
+            1.239683022105036e-08,
+            0.00025532464391486617,
+            -6.17864195972216e-06,
+            -3.4737787610348627e-08,
+            0.00015831491797858085,
+            0.0,
+            0.0,
+            -4.138430492836609
+          ]
+        },
+        "p95": {
+          "intercept": 1.4954879107545886,
+          "coefficients": [
+            0.0006683714953060556,
+            -3.784783479104742e-08,
+            0.23089221804282364,
+            0.003930526479811728,
+            8.1133274543204e-06,
+            -0.0020939695410684958,
+            0.0,
+            0.0,
+            577.0834941370617
+          ]
+        }
+      },
+      "metrics": {
+        "n_rows": 102984,
+        "quantiles": {
+          "p50": {
+            "tau": 0.5,
+            "pinball_model": 0.012802398389828771,
+            "pinball_baseline": 0.012521196648453367,
+            "improvement_pct": -2.2458056467800795,
+            "coverage": 0.18100870038064165
+          },
+          "p95": {
+            "tau": 0.95,
+            "pinball_model": 0.011822102199633401,
+            "pinball_baseline": 0.012475429927789397,
+            "improvement_pct": 5.2369155366797315,
+            "coverage": 0.04834731608793599
+          }
+        },
+        "by_regime": {
+          "NORMAL": {
+            "n_rows": 102984,
+            "p50": {
+              "pinball_model": 0.012802398389828771,
+              "pinball_baseline": 0.012521196648453367,
+              "improvement_pct": -2.2458056467800795,
+              "coverage": 0.18100870038064165
+            },
+            "p95": {
+              "pinball_model": 0.011822102199633401,
+              "pinball_baseline": 0.012475429927789397,
+              "improvement_pct": 5.2369155366797315,
+              "coverage": 0.04834731608793599
+            }
+          }
+        },
+        "quantile_crossing_frac": 0.029963294963669503
+      },
+      "n_rows": 240294,
+      "latency_coef_source": "fitted"
+    }
+  }
+}
