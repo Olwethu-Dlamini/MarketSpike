@@ -94,3 +94,36 @@ def test_internal_deque_stays_bounded_across_many_windows():
 
     assert len(est._mono) < n_samples // 10
     assert max_len < n_samples // 10
+
+
+def test_sample_exactly_at_window_edge_is_retained():
+    # With < cutoff eviction, a sample whose age equals the window length
+    # is retained (not evicted) because its timestamp is not < cutoff.
+    est = SkewEstimator(window_s=1.0)
+    # First sample at t=0 with zero transit
+    est.update(venue_ts_ns=0, recv_ts_ns=0)
+    assert est.floor_ns == 0
+
+    # Second sample arrives exactly one window (1 second) later.
+    # recv_ts_ns = SECOND, so cutoff = SECOND - SECOND = 0
+    # First sample's timestamp (0) is not < 0, so it survives eviction.
+    # Raw transit = SECOND - (SECOND - 5_000_000) = 5_000_000 ns = 5 ms
+    excess = est.update(venue_ts_ns=SECOND - 5_000_000, recv_ts_ns=SECOND)
+    assert est.floor_ns == 0  # Old sample still in window
+    assert excess == 5000  # 5 ms excess, returned in microseconds
+
+
+def test_sample_one_nanosecond_past_the_window_is_evicted():
+    # With < cutoff eviction, a sample one nanosecond older than the window
+    # is evicted because its timestamp is < cutoff.
+    est = SkewEstimator(window_s=1.0)
+    # First sample at t=0 with zero transit
+    est.update(venue_ts_ns=0, recv_ts_ns=0)
+
+    # Second sample arrives one nanosecond past the one-second window.
+    # recv_ts_ns = SECOND + 1, so cutoff = (SECOND + 1) - SECOND = 1
+    # First sample's timestamp (0) is < 1, so it is evicted.
+    # Raw transit = (SECOND + 1) - (SECOND - 5_000_000 + 1) = 5_000_000 ns
+    excess = est.update(venue_ts_ns=SECOND - 5_000_000 + 1, recv_ts_ns=SECOND + 1)
+    assert est.floor_ns == 5_000_000  # Old sample evicted, new sample is floor
+    assert excess == 0  # New sample is the floor, excess is zero
