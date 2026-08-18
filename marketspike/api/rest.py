@@ -133,6 +133,7 @@ def calendar_upcoming(
                 "country": event.country, "event_ts_ns": event.event_ts_ns,
                 "seconds_until": int((event.event_ts_ns - now_ns) / 1e9),
                 "affects": event.affects,
+                "confidence": event.confidence,
             }
             for event in clock.upcoming(now_ns, hours, symbol)
         ],

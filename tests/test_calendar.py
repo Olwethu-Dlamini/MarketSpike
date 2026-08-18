@@ -1,6 +1,10 @@
+import json
+import os
+import tempfile
+
 import pytest
 
-from marketspike.calendar.clock import CalendarEvent, EventClock
+from marketspike.calendar.clock import CalendarEvent, EventClock, load_events
 
 SECOND = 1_000_000_000
 EVENT_TS = 1_000_000 * SECOND
@@ -60,6 +64,56 @@ def test_nearest_event_wins_when_two_are_close():
     )
     clock = EventClock([CPI, later])
     assert clock.relevant(EVENT_TS + 1100 * SECOND, "EURUSD").name == "FOMC"
+
+
+def test_approaching_event_wins_over_nearer_but_stale_one():
+    """Regression for the masking bug: a stale event 1200s in the past is
+    numerically nearer to `now` than an approaching event 1500s out, but the
+    approaching one is the actionable one and must be selected."""
+    now = EVENT_TS
+    stale = CalendarEvent(
+        name="Stale NFP", importance="high", country="US",
+        event_ts_ns=now - 1200 * SECOND, affects=["EURUSD"],
+    )
+    approaching = CalendarEvent(
+        name="Approaching CPI", importance="high", country="US",
+        event_ts_ns=now + 1500 * SECOND, affects=["EURUSD"],
+    )
+    clock = EventClock([stale, approaching])
+    assert clock.relevant(now, "EURUSD").name == "Approaching CPI"
+    assert clock.phase(now, "EURUSD") == "PRE_EVENT"
+
+
+def test_event_window_outranks_a_temporally_nearer_pre_event():
+    now = EVENT_TS
+    in_window = CalendarEvent(
+        name="InWindow", importance="high", country="US",
+        event_ts_ns=now - 800 * SECOND, affects=["EURUSD"],
+    )
+    pre_event = CalendarEvent(
+        name="PreEvent", importance="high", country="US",
+        event_ts_ns=now + 100 * SECOND, affects=["EURUSD"],
+    )
+    clock = EventClock([in_window, pre_event])
+    # pre_event is numerically nearer (100s vs 800s) but only PRE_EVENT;
+    # in_window is farther but actionable right now, so it must win.
+    assert clock.relevant(now, "EURUSD").name == "InWindow"
+    assert clock.phase(now, "EURUSD") == "EVENT_WINDOW"
+
+
+def test_same_phase_still_tie_breaks_to_the_nearer_event():
+    now = EVENT_TS
+    near = CalendarEvent(
+        name="Near", importance="high", country="US",
+        event_ts_ns=now - 1000 * SECOND, affects=["EURUSD"],
+    )
+    far = CalendarEvent(
+        name="Far", importance="high", country="US",
+        event_ts_ns=now - 2000 * SECOND, affects=["EURUSD"],
+    )
+    # Both are CLEAR (> 900s past); the nearer one must still win.
+    clock = EventClock([near, far])
+    assert clock.relevant(now, "EURUSD").name == "Near"
 
 
 def test_phase_boundaries_have_no_gaps_or_overlaps():
@@ -140,3 +194,59 @@ def test_event_alert_fires_once_on_clear_to_pre_event_transition():
     assert len(alerts) == 1
     assert alerts[0]["phase"] == "PRE_EVENT"
     assert alerts[0]["name"] == "US CPI (YoY)"
+
+
+def test_confidence_defaults_to_estimated_when_absent():
+    event = CalendarEvent(
+        name="X", importance="high", country="US",
+        event_ts_ns=EVENT_TS, affects=["EURUSD"],
+    )
+    assert event.confidence == "estimated"
+
+
+def test_load_events_reads_confidence_and_defaults_when_absent():
+    payload = {
+        "events": [
+            {
+                "name": "Confirmed Release", "importance": "high", "country": "US",
+                "event_ts": "2026-09-04T12:30:00Z", "affects": ["EURUSD"],
+                "confidence": "confirmed",
+            },
+            {
+                "name": "Guessed Release", "importance": "medium", "country": "US",
+                "event_ts": "2026-09-10T12:30:00Z", "affects": ["EURUSD"],
+                # no confidence field at all
+            },
+        ]
+    }
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(payload, handle)
+        path = handle.name
+    try:
+        events = load_events(path)
+    finally:
+        os.unlink(path)
+
+    by_name = {event.name: event for event in events}
+    assert by_name["Confirmed Release"].confidence == "confirmed"
+    assert by_name["Guessed Release"].confidence == "estimated"
+
+
+def test_static_events_json_marks_the_unsourced_ppi_date_as_estimated():
+    """The Oct 15 PPI date could not be sourced against BLS/Fed and is an
+    acknowledged guess; every other static event was verified. The JSON
+    must say so explicitly rather than presenting them with equal
+    precision."""
+    events = load_events()
+    by_key = {(event.name, event.event_ts_ns): event for event in events}
+    oct_ppi = [
+        event for (name, _), event in by_key.items()
+        if name == "US PPI (MoM)"
+    ]
+    estimated = [event for event in oct_ppi if event.confidence == "estimated"]
+    confirmed_events = [
+        event for event in events
+        if event not in estimated
+    ]
+    assert len(estimated) == 1, "expected exactly one estimated PPI entry"
+    assert all(event.confidence == "confirmed" for event in confirmed_events)

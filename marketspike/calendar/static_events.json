@@ -1,24 +1,24 @@
 {
   "events": [
     {"name": "US Non-Farm Payrolls", "importance": "high", "country": "US",
-     "event_ts": "2026-09-04T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-09-04T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "US PPI (MoM)", "importance": "medium", "country": "US",
-     "event_ts": "2026-09-10T12:30:00Z", "affects": ["EURUSD"]},
+     "event_ts": "2026-09-10T12:30:00Z", "affects": ["EURUSD"], "confidence": "confirmed"},
     {"name": "US CPI (YoY)", "importance": "high", "country": "US",
-     "event_ts": "2026-09-11T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-09-11T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "FOMC Rate Decision", "importance": "high", "country": "US",
-     "event_ts": "2026-09-16T18:00:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-09-16T18:00:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "US Non-Farm Payrolls", "importance": "high", "country": "US",
-     "event_ts": "2026-10-02T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-10-02T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "US CPI (YoY)", "importance": "high", "country": "US",
-     "event_ts": "2026-10-14T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-10-14T12:30:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "US PPI (MoM)", "importance": "medium", "country": "US",
-     "event_ts": "2026-10-15T12:30:00Z", "affects": ["EURUSD"]},
+     "event_ts": "2026-10-15T12:30:00Z", "affects": ["EURUSD"], "confidence": "estimated"},
     {"name": "FOMC Rate Decision", "importance": "high", "country": "US",
-     "event_ts": "2026-10-28T18:00:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-10-28T18:00:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "US Non-Farm Payrolls", "importance": "high", "country": "US",
-     "event_ts": "2026-11-06T13:30:00Z", "affects": ["EURUSD", "BTCUSDT"]},
+     "event_ts": "2026-11-06T13:30:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"},
     {"name": "US CPI (YoY)", "importance": "high", "country": "US",
-     "event_ts": "2026-11-10T13:30:00Z", "affects": ["EURUSD", "BTCUSDT"]}
+     "event_ts": "2026-11-10T13:30:00Z", "affects": ["EURUSD", "BTCUSDT"], "confidence": "confirmed"}
   ]
 }
