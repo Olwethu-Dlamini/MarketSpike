@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MarketSpike — Slippage-Aware Sizing</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="logo">📈</span>
+      <div>
+        <h1>MarketSpike</h1>
+        <p class="tagline">Slippage-aware position sizing for high-impact events</p>
+      </div>
+    </div>
+    <div class="controls">
+      <label>API
+        <input id="apiBase" type="text" value="http://localhost:8000" />
+      </label>
+      <label>Symbol
+        <select id="symbolPicker"><option>loading…</option></select>
+      </label>
+      <span id="wsStatus" class="badge badge-offline">ws: offline</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- ===== HERO: Position Sizing ===== -->
+    <section class="card hero">
+      <h2>Slippage-Aware Position Size</h2>
+      <p class="muted">
+        Conventional calculators assume you're filled at the price you see.
+        MarketSpike measures pipeline latency and expected slippage, and returns
+        a size that accounts for both.
+      </p>
+
+      <form id="sizeForm" class="size-grid">
+        <label>Account balance (minor units)
+          <input name="account_balance_minor" type="number" value="1000000" step="100000" />
+        </label>
+        <label>Free margin (minor units)
+          <input name="free_margin_minor" type="number" value="1000000" step="100000" />
+        </label>
+        <label>Risk %
+          <input name="risk_pct" type="number" value="1.0" step="0.1" min="0" />
+        </label>
+        <label>Stop distance (price)
+          <input name="stop_distance_price" type="number" value="250.0" step="10" />
+        </label>
+        <button type="submit" class="primary">Calculate size</button>
+      </form>
+
+      <div id="sizeResult" class="result hidden"></div>
+    </section>
+
+    <!-- ===== REGIME ===== -->
+    <section class="card">
+      <h2>Volatility Regime</h2>
+      <div id="regimeBox" class="regime-box">
+        <span id="regimeState" class="regime-state">—</span>
+        <div class="regime-metrics">
+          <div><span class="label">Score</span><span id="regimeScore">—</span></div>
+          <div><span class="label">V-ratio</span><span id="regimeV">—</span></div>
+          <div><span class="label">Spread z</span><span id="regimeZ">—</span></div>
+          <div><span class="label">Trigger</span><span id="regimeTrigger">—</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LATENCY ===== -->
+    <section class="card">
+      <h2>Pipeline Latency (µs)</h2>
+      <p class="muted">The tail is what matters. A 1 ms median with a 72 ms p95 is a completely different environment.</p>
+      <table id="latencyTable">
+        <thead>
+          <tr><th>Hop</th><th>p50</th><th>p95</th><th>p99</th><th>Source</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- ===== HEALTH + MODEL ===== -->
+    <section class="card">
+      <h2>System Health & Model Card</h2>
+      <div class="two-col">
+        <div>
+          <h3>Engine</h3>
+          <pre id="healthJson" class="json">—</pre>
+        </div>
+        <div>
+          <h3>Model</h3>
+          <pre id="modelJson" class="json">—</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LIVE TICK LOG ===== -->
+    <section class="card">
+      <h2>Live Tick Stream <span class="muted">(WebSocket)</span></h2>
+      <div id="tickLog" class="tick-log"></div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      Every value carries a <code>source</code> field. Nothing synthetic is presented as measured.
+    </p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
