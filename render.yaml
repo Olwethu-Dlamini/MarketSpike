@@ -17,9 +17,14 @@ services:
       - key: MS_SYMBOLS
         value: BTCUSDT
       # Comma-separated origins allowed to call the API from a browser.
-      # Add your deployed frontend URL here once you have it.
+      #
+      # The panel this service serves at / is same-origin, so it needs no entry
+      # here. These cover the *other* copies of index.html: the GitHub Pages
+      # build of the repo root, and a local dev server. Add file:// use with the
+      # literal origin `null` if a teammate opens index.html by double-clicking
+      # it -- browsers send `Origin: null` for those.
       - key: MS_CORS_ORIGINS
-        value: http://localhost:3000,http://localhost:5173
+        value: https://olwethu-dlamini.github.io,http://localhost:3000,http://localhost:5173
       # The free tier's filesystem is ephemeral: this database is wiped on every
       # deploy and restart. Fine for serving, useless for accumulating training
       # data — record locally instead. See docs/DEPLOY.md.

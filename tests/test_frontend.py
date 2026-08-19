@@ -4,9 +4,15 @@ Follows tests/test_predict_route.py's approach: TestClient is used without the
 `with` context manager, so Starlette never runs marketspike.main's startup
 lifespan handler -- no adapters, no feeds, no network.
 """
+import yaml
 from fastapi.testclient import TestClient
 
-from marketspike.main import INDEX_HTML, PANEL_DEFAULT_API_BASE, app
+from marketspike.config import _split
+from marketspike.main import (
+    INDEX_HTML,
+    PANEL_DEFAULT_API_BASE,
+    app,
+)
 
 client = TestClient(app)
 
@@ -20,14 +26,37 @@ def test_root_serves_the_instrument_panel():
 
 def test_page_on_disk_still_carries_the_marker_that_gets_rewritten():
     # The rewrite in main.py is a literal substitution, so it fails silently if
-    # the frontend author changes the default. Fail here instead, loudly, with
-    # the reason: whoever edits that string must update PANEL_DEFAULT_API_BASE.
+    # the frontend's default changes. Fail here instead, loudly, with the
+    # reason: whoever edits that string must update PANEL_DEFAULT_API_BASE.
     page = INDEX_HTML.read_text(encoding="utf-8")
     assert page.count(PANEL_DEFAULT_API_BASE) == 2, (
         "index.html no longer hardcodes {0} exactly twice (the `api` input's "
         "value attribute and state.apiBase); update PANEL_DEFAULT_API_BASE in "
         "marketspike/main.py to match".format(PANEL_DEFAULT_API_BASE)
     )
+
+
+def test_the_file_defaults_to_the_live_service_not_localhost():
+    # Copies of this file that no backend serves -- the GitHub Pages build of
+    # the repo root, or one opened straight off disk -- get no rewrite, so the
+    # value committed here is the one they use. It must be the live service.
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    assert "localhost" not in page
+    assert page.count("https://marketspike.onrender.com") == 2
+
+
+def test_deployed_cors_allow_list_covers_the_pages_copy():
+    # The GitHub Pages copy of index.html calls this API cross-origin, so its
+    # origin needs an entry in MS_CORS_ORIGINS or every request fails preflight
+    # and that copy shows preview mode. render.yaml is what sets it in
+    # production, so assert the deployed value parses and contains the origin.
+    render_yaml = (INDEX_HTML.parent / "render.yaml").read_text(encoding="utf-8")
+    blueprint = yaml.safe_load(render_yaml)
+    env = {
+        entry["key"]: entry.get("value")
+        for entry in blueprint["services"][0]["envVars"]
+    }
+    assert "https://olwethu-dlamini.github.io" in _split(env["MS_CORS_ORIGINS"])
 
 
 def test_served_page_points_at_the_origin_it_was_requested_on():

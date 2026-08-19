@@ -169,24 +169,41 @@ There is deliberately **no `StaticFiles` mount.** The page is self-contained —
 
 ### Pointing the page at a backend — nothing to do
 
-`index.html` hardcodes its API base as `http://localhost:8000`, in the `api` input's `value` attribute and again as the script's initial `state.apiBase`, and it connects on load. That default is right locally and wrong everywhere else: served from Render it aims the visitor's browser at the visitor's *own* machine, fails, and drops into preview mode — which draws the placeholder figures baked into the file rather than live ones.
+`index.html` hardcodes its API base twice, in the `api` input's `value` attribute and again as the script's initial `state.apiBase`, and it connects on load. **The committed value is the live service, `https://marketspike.onrender.com`** — not `localhost`. That matters because copies of the file that no backend serves get no rewrite and use whatever is committed:
 
-So the backend **rewrites that default to the origin the request arrived on** as it serves the page. Open `http://localhost:8000/` and the page gets `http://localhost:8000`; open `https://marketspike.onrender.com/` and it gets `https://marketspike.onrender.com`. Same origin either way, which is also why CORS never engages. Nothing to type, nothing per-visitor, and the same behaviour on a custom domain or a preview deploy without anyone editing a URL.
+| Where the page came from | API base it uses | Why |
+|---|---|---|
+| `https://marketspike.onrender.com/` | `https://marketspike.onrender.com` | this service rewrites it to the request's origin |
+| `http://localhost:8000/` | `http://localhost:8000` | same rewrite — a local backend serves itself |
+| GitHub Pages build of the repo root | `https://marketspike.onrender.com` | static host, no rewrite: the committed value stands |
+| opened off disk (`file://`) | `https://marketspike.onrender.com` | same — the committed value stands |
+
+So the backend **rewrites the default to the origin the request arrived on** when it serves the page, and the committed value covers everyone else. Nothing to type in any of the four cases, and the same behaviour on a custom domain or a preview deploy without anyone editing a URL.
+
+The last two rows are **cross-origin**, so they need `MS_CORS_ORIGINS` — see the next section. The first two are same-origin and need nothing.
 
 Two details that matter if you touch this:
 
 - **The scheme comes from `X-Forwarded-Proto`, not from `request.base_url`.** Render terminates TLS and forwards over plain HTTP, and uvicorn only trusts forwarded headers from `--forwarded-allow-ips` (default `127.0.0.1`), which Render's proxy is not. `base_url` therefore reports `http` on an HTTPS deployment — and an `http://` base on an `https://` page is blocked as mixed content, with `ws://` instead of `wss://` blocked too.
 - **The rewrite is a literal string substitution**, so it would fail *silently* if the frontend's default ever changed. `tests/test_frontend.py` asserts the marker still appears in `index.html` exactly twice, so that turns into a failing test naming `PANEL_DEFAULT_API_BASE` instead of a panel quietly serving placeholder numbers.
 
-`index.html` itself is not modified — on disk it stays exactly as the frontend author wrote it, and only the copy going out over the wire differs, by those two strings. The `api` box still accepts a hand-typed address for pointing a local page at the hosted backend.
+The `api` box still accepts a hand-typed address, for pointing any copy of the page at a different backend.
 
 **What the failure looks like**, if it ever regresses: a panel showing numbers with `estimated` / `simulated` badges is not connected. The status chip in the top right reads `preview mode` rather than `live`.
 
 ### CORS — why it no longer bites
 
-A browser refuses to let a page on one domain call an API on another unless the API allows it. Because the page is served by this service and defaults to the origin it was served from, page and API are always the **same origin**, so that rule never engages: no preflight, no allow-list, nothing to forget.
+A browser refuses to let a page on one domain call an API on another unless the API allows it. The panel **this service serves** is same-origin, so that rule never engages for it: no preflight, no allow-list, nothing to forget.
 
-`MS_CORS_ORIGINS` still exists and still matters in exactly one case — a page served from somewhere *other* than this service (a Vercel deploy, a Vite dev server, a teammate's static host) calling this API. Then add that page's origin:
+It does engage for every other copy of the page, because they call `marketspike.onrender.com` from a different origin. `render.yaml` therefore allow-lists the GitHub Pages origin alongside the local dev servers:
+
+```
+https://olwethu-dlamini.github.io,http://localhost:3000,http://localhost:5173
+```
+
+**`file://` is not in that list.** A page opened by double-clicking sends `Origin: null`, so add the literal string `null` if a teammate works that way. It is a mild loosening — any local HTML file could then call the API — but this API is public and unauthenticated already, so it grants nothing that `curl` does not.
+
+To add an origin (a Vercel deploy, a Vite dev server, a teammate's static host):
 
 1. Render dashboard → your service → **Environment**
 2. Edit `MS_CORS_ORIGINS`, comma-separated, no spaces:
@@ -194,6 +211,8 @@ A browser refuses to let a page on one domain call an API on another unless the 
    http://localhost:5173,https://marketspike-ui.vercel.app
    ```
 3. Save. Render restarts automatically.
+
+Editing `render.yaml` is only enough if the service is Blueprint-linked, in which case Render syncs `envVars` on each deploy. If it was created manually as a Web Service, `render.yaml` is inert and the dashboard is the only place the value lives — check it there after changing the file.
 
 Symptom if you forget: the page loads but every API call fails, and the console says "blocked by CORS policy". The backend is fine — it's the allow-list.
 

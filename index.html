@@ -263,7 +263,7 @@
     <div class="topbar-controls">
       <div class="field-inline">
         <span>api</span>
-        <input id="apiBaseInput" type="text" value="http://localhost:8000" spellcheck="false" />
+        <input id="apiBaseInput" type="text" value="https://marketspike.onrender.com" spellcheck="false" />
       </div>
       <button class="btn" id="connectBtn">Connect</button>
       <div class="status-chip preview" id="statusChip"><span class="status-dot"></span><span id="statusText">preview mode</span></div>
@@ -467,7 +467,7 @@
   const SYMBOL = "BTCUSDT";
 
   let state = {
-    apiBase: "http://localhost:8000",
+    apiBase: "https://marketspike.onrender.com",
     live: false,
     ws: null,
     pollTimer: null,

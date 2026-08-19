@@ -115,9 +115,10 @@ MS_SYMBOLS=BTCUSDT python -m marketspike.main
 ```
 
 The service listens on `http://localhost:8000` — open that in a browser for the
-instrument panel. The backend serves the page with its API base rewritten to
-whatever origin the request arrived on, so the panel connects to the service
-that served it, locally or deployed, with no URL to configure.
+instrument panel. The page's committed API base is the live service, so any copy
+of `index.html` works as-is; when this backend serves it, it rewrites that base
+to the origin the request arrived on, so a local run talks to your own process.
+Either way there is no URL to configure.
 
 **Two different readiness notions, worth not confusing.** `warmup_complete` flips to `true` within a couple of seconds — it means both volatility horizons hold an estimate (the slow one is seeded from klines at boot, the fast one after its first sample). What takes longer is the 30-second fast EWMA *converging* to a stable value: allow roughly **150 seconds** before `v_ratio` and the regime score are trustworthy. Check both:
 
@@ -424,6 +425,7 @@ marketspike/
 └── main.py       app assembly, frontend route, supervised task startup
 
 index.html        single-page instrument panel, served by the backend at /
+                  (API base defaults to the live service, rewritten per-origin)
 
 .github/workflows/
 └── keepalive.yml pings /api/v1/health so the free Render instance never sleeps

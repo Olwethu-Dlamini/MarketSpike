@@ -57,14 +57,16 @@ INDEX_HTML = REPO_ROOT / "index.html"
 
 # The page hardcodes its API base address twice -- once as the `api` input's
 # value attribute, once as the initial `state.apiBase` -- and connects to it on
-# load. That default is right for local development and wrong everywhere else:
-# served from Render it points the visitor's browser at the visitor's own
-# machine, so the page silently falls back to preview mode and draws the
-# placeholder figures baked into the file. Rewriting the default to the origin
-# the request actually arrived on fixes that for every deployment without
-# editing the page, which is owned by the frontend author and stays untouched
-# on disk. tests/test_frontend.py fails loudly if this marker ever moves.
-PANEL_DEFAULT_API_BASE = "http://localhost:8000"
+# load. It holds the live URL, so any copy of the file works as-is: opened from
+# disk, or off GitHub Pages, which is a static host with no backend of its own
+# to fill the value in.
+#
+# When *this* service serves the page it rewrites that default to the origin the
+# request arrived on, which is what makes a local backend self-serve: run
+# `python -m marketspike.main`, open http://localhost:8000/, and the panel talks
+# to your process rather than to production. On Render the rewrite resolves to
+# the same URL the file already carries.
+PANEL_DEFAULT_API_BASE = "https://marketspike.onrender.com"
 
 
 def _request_origin(request: Request) -> str:
