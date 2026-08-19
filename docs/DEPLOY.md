@@ -1,6 +1,6 @@
 # Deploying MarketSpike to Render
 
-> **Already deployed:** https://marketspike.onrender.com
+> **Already deployed:** https://marketspike.onrender.com — the instrument panel is at the root; the backend serves it.
 > Health check: `https://marketspike.onrender.com/api/v1/health` · Interactive API: `https://marketspike.onrender.com/docs`
 
 Written for someone who has never deployed anything. Read section 1 even if you want to skip ahead — it explains what you're actually doing.
@@ -64,19 +64,27 @@ So between deploys, Render is the *better* recorder. Two caveats before relying 
 
 - The database is wiped on every redeploy, so pull the data out before you push again.
 - A free instance sleeps after ~15 minutes without inbound HTTP, and the recorder stops
-  with it. Keeping a browser tab open on `/api/v1/health` (or any uptime pinger) keeps it
-  awake and recording.
+  with it. The keep-alive workflow below handles that, but it only keeps the instance
+  *awake* — it cannot make the database survive the next deploy.
 
 To retrieve what it captured, run the capture script against the live service rather than
 a local file — or simply train locally, where the data is yours to keep.
 
-### Free instances go to sleep
+### Free instances go to sleep — unless something keeps pinging them
 
 After about 15 minutes with no incoming web requests, Render spins a free service down. The next visitor's request wakes it, but that first request takes **30–60 seconds** while it boots.
 
-**Why this matters on demo day:** a sleeping service means a cold start *and* a cold engine. The volatility horizon needs roughly 150 seconds after boot before `v_ratio` is trustworthy.
+**Why this matters:** a sleeping service means a cold start *and* a cold engine. The volatility horizon needs roughly 150 seconds after boot before `v_ratio` is trustworthy, and the recorder loses everything it had collected. A judge who opens the URL and waits 40 seconds for a blank page has already formed an opinion.
 
-**What to do:** open the URL 5 minutes before you present and leave a tab on it. Or upgrade to a paid instance, which never sleeps.
+**What is in place:** [`.github/workflows/keepalive.yml`](../.github/workflows/keepalive.yml) pings `/api/v1/health` every 10 minutes from GitHub Actions, so the idle timer never reaches 15. Nothing to configure — it runs from the repo. Check it under the repo's **Actions** tab; each run prints the health payload it got back.
+
+Three honest caveats:
+
+- **GitHub's cron is best-effort.** Scheduled runs are queued at low priority and can fire several minutes late. 10 minutes was chosen to absorb that; it is not a guarantee.
+- **GitHub disables scheduled workflows after 60 days of repo inactivity.** It emails you first. Re-enable from the Actions tab.
+- **The free tier gives 750 instance-hours a month.** Awake around the clock is about 730, so this fits only while MarketSpike is the *only* free service on the account. A second one and both start getting suspended near month end.
+
+If the service genuinely must not sleep — a graded demo, anything with a deadline — pay for the Starter instance for that month. It never spins down, has a persistent disk, and removes this entire section's worth of caveats. Keep the ping job anyway; it costs nothing and doubles as an uptime alarm, since a failing run means the service stopped answering.
 
 ---
 
@@ -134,36 +142,52 @@ Or just open **`https://marketspike.onrender.com/docs`** in a browser — the in
 
 ---
 
-## 4. Connecting your frontend
+## 4. The frontend
 
-Your teammates change one thing: the base URL.
+**The backend serves it.** The instrument panel lives at [`frontend/index.html`](../frontend/index.html) and `marketspike/main.py` mounts it:
 
-```js
-// before
-const API = "http://localhost:8000";
-const WS  = "ws://localhost:8000/ws/v1/stream";
+```python
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
-// after
-const API = "https://marketspike.onrender.com";
-const WS  = "wss://marketspike.onrender.com/ws/v1/stream";
+@app.get("/", include_in_schema=False)
+async def index():
+    return FileResponse(FRONTEND_DIR / "index.html")
 ```
 
-Note **`wss://`**, not `ws://`. Render serves HTTPS, and a secure page cannot open an insecure WebSocket — browsers block it. Getting this wrong produces a silent connection failure with a console error, which is a horrible thing to debug at midnight.
+So there is no second service and no second URL:
 
-### CORS — the other thing that will bite you
+| URL | What it is |
+|---|---|
+| `https://marketspike.onrender.com/` | the instrument panel |
+| `https://marketspike.onrender.com/static/...` | anything else dropped in `frontend/` |
+| `https://marketspike.onrender.com/api/v1/...` | the API the panel calls |
+| `https://marketspike.onrender.com/docs` | interactive API reference |
 
-A browser refuses to let a page on one domain call an API on another, unless the API explicitly allows it. That allow-list is the `MS_CORS_ORIGINS` environment variable.
+**No base URL to edit.** On boot the page probes its own origin for `/api/v1/health` and uses it if it answers, falling back to `http://localhost:8000` when the page was opened off disk or from a dev server. Deployed, it connects to itself; locally, `python -m marketspike.main` then open `http://localhost:8000/` and it connects to itself there too. The `api` box in the top bar still accepts a hand-typed address for pointing a local page at the hosted backend.
 
-Once your frontend has its own URL, add it:
+### CORS — why it no longer bites
+
+A browser refuses to let a page on one domain call an API on another unless the API allows it. Because the page and the API are now the **same origin**, that rule never engages: no preflight, no allow-list, nothing to forget.
+
+`MS_CORS_ORIGINS` still exists and still matters in exactly one case — a page served from somewhere *other* than this service (a Vercel deploy, a Vite dev server, a teammate's static host) calling this API. Then add that page's origin:
 
 1. Render dashboard → your service → **Environment**
 2. Edit `MS_CORS_ORIGINS`, comma-separated, no spaces:
    ```
-   http://localhost:5173,https://marketspike-ui.onrender.com
+   http://localhost:5173,https://marketspike-ui.vercel.app
    ```
 3. Save. Render restarts automatically.
 
-Symptom if you forget: the frontend loads but every API call fails, and the browser console says something about "blocked by CORS policy". The backend is fine — it's the allow-list.
+Symptom if you forget: the page loads but every API call fails, and the console says "blocked by CORS policy". The backend is fine — it's the allow-list.
+
+### If you do host the page separately
+
+The two things that catch people: use `https://` for the API, and **`wss://`**, not `ws://`, for the stream. Render serves HTTPS, and a secure page cannot open an insecure WebSocket — browsers block it silently apart from a console error, which is a horrible thing to debug at midnight.
+
+```js
+const API = "https://marketspike.onrender.com";
+const WS  = "wss://marketspike.onrender.com/ws/v1/stream";
+```
 
 ---
 
@@ -209,7 +233,9 @@ Honestly — **have both ready.**
 | Health check fails | Wrong path | Must be `/api/v1/health` |
 | Frontend calls all fail, CORS error | Frontend URL not allow-listed | Add it to `MS_CORS_ORIGINS`, save, wait for restart |
 | WebSocket won't connect from a live site | Using `ws://` on an HTTPS page | Use `wss://` |
-| First request takes a minute | Free instance was asleep | Expected. Open it early on demo day |
+| First request takes a minute | Free instance was asleep | Check the keep-alive workflow is enabled under the repo's Actions tab |
+| `/` returns 404 | Deployed before the frontend mount, or `frontend/` missing from the repo | Confirm `frontend/index.html` is committed, then redeploy |
+| Panel loads but shows "preview mode" | The page could not reach `/api/v1/health` | Open `<url>/api/v1/health` directly — if that is slow, the instance was asleep; reload the page |
 | `model_source: fallback_coefficients` | `model.json` not committed | Train locally, commit the file, push |
 | `/health` shows 0 ticks after a redeploy | Ephemeral filesystem wiped the database | Expected on free tier. Record locally |
 

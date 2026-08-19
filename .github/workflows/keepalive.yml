@@ -1,0 +1,48 @@
+name: keep-alive
+
+# Render spins a free web service down after ~15 minutes with no inbound HTTP.
+# The next visitor then waits 30-60s for a cold start, and -- worse for a demo --
+# the engine restarts cold, so v_ratio is untrustworthy for its first ~150s and
+# the recorder loses everything it had collected.
+#
+# This job pings the health endpoint often enough that the idle timer never
+# expires. GitHub's scheduled runners are best-effort and routinely fire several
+# minutes late under load, so the interval is set well below the 15 minute
+# window rather than close to it.
+#
+# Two things to know:
+#   * GitHub disables scheduled workflows on a repo with 60 days of no activity.
+#     It emails first; re-enable it from the Actions tab.
+#   * The free tier allows 750 instance-hours a month. Holding one service awake
+#     around the clock is ~730, so this fits only while marketspike is the only
+#     free service on the account.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# A queued run is pointless once a newer one starts: the newer ping keeps the
+# service just as awake.
+concurrency:
+  group: keep-alive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /api/v1/health
+        run: |
+          URL="https://marketspike.onrender.com/api/v1/health"
+          for attempt in 1 2 3; do
+            # --max-time 90 because a cold start legitimately takes 30-60s: a
+            # slow answer means the ping worked, not that the service is down.
+            code=$(curl -sS -o response.json -w '%{http_code}' --max-time 90 "$URL") \
+              && [ "$code" = "200" ] \
+              && { echo "awake (attempt $attempt):"; cat response.json; exit 0; }
+            echo "attempt $attempt failed (http ${code:-none})"
+            [ "$attempt" = 3 ] || sleep 20
+          done
+          echo "::error::$URL did not return 200 after 3 attempts"
+          exit 1

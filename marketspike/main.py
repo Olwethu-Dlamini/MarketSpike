@@ -3,10 +3,13 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from marketspike.api import rest as rest_api
 from marketspike.api import ws as ws_api
@@ -38,6 +41,22 @@ app.add_middleware(
 )
 app.include_router(ws_api.router)
 app.include_router(rest_api.router)
+
+# The instrument panel is a single static page served by this same service, so
+# the browser talks to one origin and CORS never enters the picture. It lives in
+# the repo rather than inside the installed package, so resolve it from this
+# file instead of the process CWD: Render starts uvicorn from the repo root, but
+# `python -m marketspike.main` from anywhere else would not, and StaticFiles
+# raises at import time on a missing directory.
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def index() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "index.html")
+
 
 STATE: Dict[str, object] = {"started_ns": 0, "adapters": {}, "tasks": []}
 
