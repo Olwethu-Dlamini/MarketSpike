@@ -144,14 +144,15 @@ Or just open **`https://marketspike.onrender.com/docs`** in a browser — the in
 
 ## 4. The frontend
 
-**The backend serves it.** The instrument panel lives at [`frontend/index.html`](../frontend/index.html) and `marketspike/main.py` mounts it:
+**The backend serves it.** The instrument panel is [`index.html`](../index.html) at the repo root, and `marketspike/main.py` serves it at `/`:
 
 ```python
-app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+REPO_ROOT = Path(__file__).resolve().parent.parent
+INDEX_HTML = REPO_ROOT / "index.html"
 
 @app.get("/", include_in_schema=False)
 async def index():
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return FileResponse(INDEX_HTML)
 ```
 
 So there is no second service and no second URL:
@@ -159,15 +160,22 @@ So there is no second service and no second URL:
 | URL | What it is |
 |---|---|
 | `https://marketspike.onrender.com/` | the instrument panel |
-| `https://marketspike.onrender.com/static/...` | anything else dropped in `frontend/` |
 | `https://marketspike.onrender.com/api/v1/...` | the API the panel calls |
 | `https://marketspike.onrender.com/docs` | interactive API reference |
 
-**No base URL to edit.** On boot the page probes its own origin for `/api/v1/health` and uses it if it answers, falling back to `http://localhost:8000` when the page was opened off disk or from a dev server. Deployed, it connects to itself; locally, `python -m marketspike.main` then open `http://localhost:8000/` and it connects to itself there too. The `api` box in the top bar still accepts a hand-typed address for pointing a local page at the hosted backend.
+There is deliberately **no `StaticFiles` mount.** The page is self-contained — inline CSS, inline script, fonts from Google's CDN — so it has no sibling assets to serve, and the one-line version (`StaticFiles(directory=REPO_ROOT)`) would publish the whole repository over HTTP, `.git/` included. Add a mount against a dedicated assets directory if the page ever grows one.
+
+### Pointing the page at a backend
+
+The `api` box in the top bar holds the base URL, and it ships as `http://localhost:8000`. That is correct for local development: run `python -m marketspike.main`, open `http://localhost:8000/`, and it connects on load.
+
+**On the deployed URL you have to change it.** The page loads, tries `http://localhost:8000` — the visitor's *own* machine — fails, and falls back to preview mode, which renders the placeholder figures baked into the file rather than live ones. Type `https://marketspike.onrender.com` into the `api` box and press Enter (or click Connect) and the status chip flips from `preview mode` to `live`.
+
+That is one manual step per visitor, so on demo day do it before you hand anything over, and know what the failure looks like: **a panel showing numbers with `estimated` / `simulated` badges is not connected.** The chip in the top right is the thing to check.
 
 ### CORS — why it no longer bites
 
-A browser refuses to let a page on one domain call an API on another unless the API allows it. Because the page and the API are now the **same origin**, that rule never engages: no preflight, no allow-list, nothing to forget.
+A browser refuses to let a page on one domain call an API on another unless the API allows it. Serve the page from `https://marketspike.onrender.com/` and point it at `https://marketspike.onrender.com` and it is the **same origin**, so that rule never engages: no preflight, no allow-list, nothing to forget.
 
 `MS_CORS_ORIGINS` still exists and still matters in exactly one case — a page served from somewhere *other* than this service (a Vercel deploy, a Vite dev server, a teammate's static host) calling this API. Then add that page's origin:
 
@@ -234,8 +242,8 @@ Honestly — **have both ready.**
 | Frontend calls all fail, CORS error | Frontend URL not allow-listed | Add it to `MS_CORS_ORIGINS`, save, wait for restart |
 | WebSocket won't connect from a live site | Using `ws://` on an HTTPS page | Use `wss://` |
 | First request takes a minute | Free instance was asleep | Check the keep-alive workflow is enabled under the repo's Actions tab |
-| `/` returns 404 | Deployed before the frontend mount, or `frontend/` missing from the repo | Confirm `frontend/index.html` is committed, then redeploy |
-| Panel loads but shows "preview mode" | The page could not reach `/api/v1/health` | Open `<url>/api/v1/health` directly — if that is slow, the instance was asleep; reload the page |
+| `/` returns 404 | Deployed before the `/` route landed, or `index.html` missing from the repo | Confirm `index.html` is committed at the repo root, then redeploy |
+| Panel loads but shows "preview mode" | Expected on the deployed URL — the `api` box still says `localhost:8000` | Type the service URL into the `api` box and press Enter. If it still fails, open `<url>/api/v1/health` directly |
 | `model_source: fallback_coefficients` | `model.json` not committed | Train locally, commit the file, push |
 | `/health` shows 0 ticks after a redeploy | Ephemeral filesystem wiped the database | Expected on free tier. Record locally |
 

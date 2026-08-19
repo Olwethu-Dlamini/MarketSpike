@@ -465,10 +465,9 @@
 
   const $ = (id) => document.getElementById(id);
   const SYMBOL = "BTCUSDT";
-  const LOCAL_API_BASE = "http://localhost:8000";
 
   let state = {
-    apiBase: LOCAL_API_BASE,
+    apiBase: "http://localhost:8000",
     live: false,
     ws: null,
     pollTimer: null,
@@ -891,35 +890,7 @@
   $("apiBaseInput").addEventListener("keydown", (e) => { if(e.key==="Enter") tryConnect(); });
 
   // boot
-  //
-  // The backend serves this page itself (see marketspike/main.py), so its own
-  // origin is the first place to look for the API -- that is what makes the
-  // deployed panel work with no URL to retype and no CORS involved. Opened
-  // straight off disk (file://) or from a separate dev server there is no API
-  // behind the origin, so fall back to the local backend's default address.
-  async function bootConnect(){
-    const candidates = [];
-    if(/^https?:$/.test(location.protocol)){
-      candidates.push(location.origin.replace(/\/+$/,""));
-    }
-    if(candidates.indexOf(LOCAL_API_BASE) < 0) candidates.push(LOCAL_API_BASE);
-
-    $("statusText").textContent = "connecting\u2026";
-    for(let i = 0; i < candidates.length; i++){
-      state.apiBase = candidates[i];
-      $("apiBaseInput").value = candidates[i];
-      try{
-        await fetchJSON("/api/v1/health", {}, 4000);
-        goLive();
-        return;
-      }catch(e){}
-    }
-    $("apiBaseInput").value = candidates[0];
-    state.apiBase = candidates[0];
-    goPreview();
-  }
-
-  bootConnect();
+  tryConnect();
 })();
 </script>
 </body>

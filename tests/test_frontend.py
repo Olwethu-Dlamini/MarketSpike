@@ -6,7 +6,7 @@ lifespan handler -- no adapters, no feeds, no network.
 """
 from fastapi.testclient import TestClient
 
-from marketspike.main import FRONTEND_DIR, app
+from marketspike.main import INDEX_HTML, app
 
 client = TestClient(app)
 
@@ -18,24 +18,22 @@ def test_root_serves_the_instrument_panel():
     assert "MARKETSPIKE" in response.text
 
 
-def test_static_mount_serves_the_page_bytes_unchanged():
-    response = client.get("/static/index.html")
-    assert response.status_code == 200
-    assert response.text == (FRONTEND_DIR / "index.html").read_text()
+def test_root_serves_the_page_bytes_unchanged():
+    assert client.get("/").text == INDEX_HTML.read_text()
 
 
 def test_serving_the_page_does_not_shadow_the_api():
-    # The page is bound to exactly "/" and the assets to "/static", so an API
-    # path can never be swallowed by either. This is the regression guard for
-    # someone later mounting StaticFiles at "/" instead.
+    # The page is bound to exactly "/", so no API path can be swallowed by it.
+    # This is the regression guard for someone later mounting StaticFiles at
+    # "/" -- which would match every unclaimed path, including future routes.
     response = client.get("/api/v1/instruments")
     assert response.status_code == 200
     assert response.json()["v"] == 1
 
 
-def test_panel_defaults_to_its_own_origin():
-    # The deployed page must connect without anyone retyping a URL: it probes
-    # location.origin before falling back to the local dev address.
-    page = (FRONTEND_DIR / "index.html").read_text()
-    assert "location.origin" in page
-    assert 'const LOCAL_API_BASE = "http://localhost:8000";' in page
+def test_repo_root_is_not_published_over_http():
+    # index.html is served by an explicit route, not by a StaticFiles mount
+    # over the repo root: nothing else in the repository is reachable.
+    for path in ("/render.yaml", "/model.json", "/marketspike/config.py",
+                 "/static/index.html", "/.git/config"):
+        assert client.get(path).status_code == 404, path
