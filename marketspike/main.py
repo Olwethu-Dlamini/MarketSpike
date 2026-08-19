@@ -6,9 +6,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 
 from marketspike.api import rest as rest_api
 from marketspike.api import ws as ws_api
@@ -55,10 +55,46 @@ INDEX_HTML = REPO_ROOT / "index.html"
 # are inline and its fonts come from Google's CDN. Add the mount against a
 # dedicated assets directory the moment there is one to serve.
 
+# The page hardcodes its API base address twice -- once as the `api` input's
+# value attribute, once as the initial `state.apiBase` -- and connects to it on
+# load. That default is right for local development and wrong everywhere else:
+# served from Render it points the visitor's browser at the visitor's own
+# machine, so the page silently falls back to preview mode and draws the
+# placeholder figures baked into the file. Rewriting the default to the origin
+# the request actually arrived on fixes that for every deployment without
+# editing the page, which is owned by the frontend author and stays untouched
+# on disk. tests/test_frontend.py fails loudly if this marker ever moves.
+PANEL_DEFAULT_API_BASE = "http://localhost:8000"
+
+
+def _request_origin(request: Request) -> str:
+    """Scheme and authority the browser used, as seen through Render's proxy.
+
+    Deliberately reads the forwarded headers rather than `request.base_url`:
+    uvicorn only honours them from `--forwarded-allow-ips` (default
+    "127.0.0.1"), and Render's proxy is not on that list, so `base_url` reports
+    scheme "http" on an HTTPS deployment. Handing that back would make an HTTPS
+    page fetch over HTTP -- blocked as mixed content -- and derive `ws://`
+    instead of `wss://`, which browsers also refuse.
+    """
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    # A chain of proxies appends: "https,http". The client-facing one is first.
+    scheme = forwarded_proto.split(",")[0].strip() or request.url.scheme
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+    )
+    return "{0}://{1}".format(scheme, host)
+
 
 @app.get("/", include_in_schema=False)
-async def index() -> FileResponse:
-    return FileResponse(INDEX_HTML)
+async def index(request: Request) -> HTMLResponse:
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    page = page.replace(PANEL_DEFAULT_API_BASE, _request_origin(request))
+    # The body varies with the request's own origin, so it must not be held by
+    # a shared cache and served to someone who arrived on a different host.
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 
 
 STATE: Dict[str, object] = {"started_ns": 0, "adapters": {}, "tasks": []}

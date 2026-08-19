@@ -151,8 +151,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 INDEX_HTML = REPO_ROOT / "index.html"
 
 @app.get("/", include_in_schema=False)
-async def index():
-    return FileResponse(INDEX_HTML)
+async def index(request: Request):
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    page = page.replace(PANEL_DEFAULT_API_BASE, _request_origin(request))
+    return HTMLResponse(page, headers={"Cache-Control": "no-store"})
 ```
 
 So there is no second service and no second URL:
@@ -165,17 +167,24 @@ So there is no second service and no second URL:
 
 There is deliberately **no `StaticFiles` mount.** The page is self-contained — inline CSS, inline script, fonts from Google's CDN — so it has no sibling assets to serve, and the one-line version (`StaticFiles(directory=REPO_ROOT)`) would publish the whole repository over HTTP, `.git/` included. Add a mount against a dedicated assets directory if the page ever grows one.
 
-### Pointing the page at a backend
+### Pointing the page at a backend — nothing to do
 
-The `api` box in the top bar holds the base URL, and it ships as `http://localhost:8000`. That is correct for local development: run `python -m marketspike.main`, open `http://localhost:8000/`, and it connects on load.
+`index.html` hardcodes its API base as `http://localhost:8000`, in the `api` input's `value` attribute and again as the script's initial `state.apiBase`, and it connects on load. That default is right locally and wrong everywhere else: served from Render it aims the visitor's browser at the visitor's *own* machine, fails, and drops into preview mode — which draws the placeholder figures baked into the file rather than live ones.
 
-**On the deployed URL you have to change it.** The page loads, tries `http://localhost:8000` — the visitor's *own* machine — fails, and falls back to preview mode, which renders the placeholder figures baked into the file rather than live ones. Type `https://marketspike.onrender.com` into the `api` box and press Enter (or click Connect) and the status chip flips from `preview mode` to `live`.
+So the backend **rewrites that default to the origin the request arrived on** as it serves the page. Open `http://localhost:8000/` and the page gets `http://localhost:8000`; open `https://marketspike.onrender.com/` and it gets `https://marketspike.onrender.com`. Same origin either way, which is also why CORS never engages. Nothing to type, nothing per-visitor, and the same behaviour on a custom domain or a preview deploy without anyone editing a URL.
 
-That is one manual step per visitor, so on demo day do it before you hand anything over, and know what the failure looks like: **a panel showing numbers with `estimated` / `simulated` badges is not connected.** The chip in the top right is the thing to check.
+Two details that matter if you touch this:
+
+- **The scheme comes from `X-Forwarded-Proto`, not from `request.base_url`.** Render terminates TLS and forwards over plain HTTP, and uvicorn only trusts forwarded headers from `--forwarded-allow-ips` (default `127.0.0.1`), which Render's proxy is not. `base_url` therefore reports `http` on an HTTPS deployment — and an `http://` base on an `https://` page is blocked as mixed content, with `ws://` instead of `wss://` blocked too.
+- **The rewrite is a literal string substitution**, so it would fail *silently* if the frontend's default ever changed. `tests/test_frontend.py` asserts the marker still appears in `index.html` exactly twice, so that turns into a failing test naming `PANEL_DEFAULT_API_BASE` instead of a panel quietly serving placeholder numbers.
+
+`index.html` itself is not modified — on disk it stays exactly as the frontend author wrote it, and only the copy going out over the wire differs, by those two strings. The `api` box still accepts a hand-typed address for pointing a local page at the hosted backend.
+
+**What the failure looks like**, if it ever regresses: a panel showing numbers with `estimated` / `simulated` badges is not connected. The status chip in the top right reads `preview mode` rather than `live`.
 
 ### CORS — why it no longer bites
 
-A browser refuses to let a page on one domain call an API on another unless the API allows it. Serve the page from `https://marketspike.onrender.com/` and point it at `https://marketspike.onrender.com` and it is the **same origin**, so that rule never engages: no preflight, no allow-list, nothing to forget.
+A browser refuses to let a page on one domain call an API on another unless the API allows it. Because the page is served by this service and defaults to the origin it was served from, page and API are always the **same origin**, so that rule never engages: no preflight, no allow-list, nothing to forget.
 
 `MS_CORS_ORIGINS` still exists and still matters in exactly one case — a page served from somewhere *other* than this service (a Vercel deploy, a Vite dev server, a teammate's static host) calling this API. Then add that page's origin:
 
@@ -243,7 +252,7 @@ Honestly — **have both ready.**
 | WebSocket won't connect from a live site | Using `ws://` on an HTTPS page | Use `wss://` |
 | First request takes a minute | Free instance was asleep | Check the keep-alive workflow is enabled under the repo's Actions tab |
 | `/` returns 404 | Deployed before the `/` route landed, or `index.html` missing from the repo | Confirm `index.html` is committed at the repo root, then redeploy |
-| Panel loads but shows "preview mode" | Expected on the deployed URL — the `api` box still says `localhost:8000` | Type the service URL into the `api` box and press Enter. If it still fails, open `<url>/api/v1/health` directly |
+| Panel loads but shows "preview mode" | The page could not reach `/api/v1/health` on its own origin | Check the `api` box: if it says `localhost:8000` on the deployed URL the rewrite broke — run `pytest tests/test_frontend.py`. Otherwise open `<url>/api/v1/health` directly; a slow answer means the instance was asleep, so reload |
 | `model_source: fallback_coefficients` | `model.json` not committed | Train locally, commit the file, push |
 | `/health` shows 0 ticks after a redeploy | Ephemeral filesystem wiped the database | Expected on free tier. Record locally |
 
