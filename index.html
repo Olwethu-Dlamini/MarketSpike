@@ -81,7 +81,12 @@
     background:var(--surface-2); border:1px solid var(--border); color:var(--text);
     font-family:var(--font-mono); font-size:11.5px; padding:6px 8px; border-radius:6px; width:190px;
   }
-  .field-inline input:focus{outline:1px solid var(--measured); outline-offset:0;}
+  .field-inline select{
+    background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+    font-family:var(--font-mono); font-size:11.5px; padding:6px 8px; border-radius:6px; cursor:pointer;
+  }
+  .field-inline select:disabled{color:var(--text-faint); cursor:default;}
+  .field-inline input:focus, .field-inline select:focus{outline:1px solid var(--measured); outline-offset:0;}
   .btn{
     font-family:var(--font-mono); font-size:11.5px; letter-spacing:0.03em; text-transform:uppercase;
     background:var(--surface-2); color:var(--text); border:1px solid var(--border);
@@ -229,7 +234,15 @@
     display:flex; flex-direction:column-reverse; gap:0; height:230px; overflow:hidden;
     border:1px solid var(--border-soft); border-radius:8px; background:#0B0E14;
     font-family:var(--font-mono); font-size:12px;
+    /* Every new tick is inserted at the strip's start edge, which reflows and
+       repaints every row it holds. `contain` scopes that work to this box so it
+       cannot ripple out into the page below -- the tape sits directly above the
+       footer, and without this the whole bottom of the page judders on each
+       tick. `overflow-anchor:none` keeps the browser's scroll anchoring from
+       trying to compensate for content it can never bring into view. */
+    contain:content; overflow-anchor:none;
   }
+  .tick-rate{font-family:var(--font-mono); font-size:10.5px; color:var(--text-faint); margin:8px 0 0; text-align:right;}
   .tick-row{
     display:grid; grid-template-columns:100px 1fr 1fr 90px 90px; gap:10px; padding:7px 12px;
     border-bottom:1px solid var(--border-soft); color:var(--text-dim);
@@ -261,6 +274,10 @@
   <div class="topbar-inner">
     <div class="brand"><span class="mark"></span>MARKETSPIKE<span class="brand-sub">/ instrument panel</span></div>
     <div class="topbar-controls">
+      <div class="field-inline">
+        <span>instrument</span>
+        <select id="symbolSelect" disabled><option value="BTCUSDT">BTCUSDT</option></select>
+      </div>
       <div class="field-inline">
         <span>api</span>
         <input id="apiBaseInput" type="text" value="https://marketspike.onrender.com" spellcheck="false" />
@@ -312,16 +329,24 @@
       <div class="panel">
         <h3>Inputs</h3>
         <p class="hint">Sent to <code style="font-family:var(--font-mono)">POST /api/v1/size</code> against the connected symbol.</p>
+        <div class="toggle-row" id="sizeDirToggle">
+          <div class="toggle-opt active" data-dir="buy">Buy</div>
+          <div class="toggle-opt" data-dir="sell">Sell</div>
+        </div>
         <div class="field-row">
-          <div class="field"><label class="f">Balance ($)</label><input id="inBalance" type="number" value="10000" step="1"></div>
+          <div class="field"><label class="f">Balance (<span class="acct-ccy">USD</span>)</label><input id="inBalance" type="number" value="10000" step="1"></div>
           <div class="field"><label class="f">Risk %</label><input id="inRisk" type="number" value="1.0" step="0.1"></div>
         </div>
         <div class="field-row">
           <div class="field"><label class="f">Stop distance (price)</label><input id="inStop" type="number" value="250" step="1"></div>
-          <div class="field"><label class="f">Free margin ($)</label><input id="inMargin" type="number" value="10000" step="1"></div>
+          <div class="field"><label class="f">Free margin (<span class="acct-ccy">USD</span>)</label><input id="inMargin" type="number" value="10000" step="1"></div>
         </div>
+        <p class="hint" id="stopHint">&mdash;</p>
         <button class="btn btn-primary" id="calcSizeBtn" style="width:100%; margin-top:4px;">Calculate size</button>
         <div class="result-box empty" id="sizeResult">Waiting for input — this reads live from your MarketSpike instance if connected, otherwise it's computed locally and marked simulated.</div>
+        <div class="stat-label" style="margin:20px 0 2px;"><span>Instrument spec</span><span class="badge" id="badgeSpec">simulated</span></div>
+        <p class="hint" style="margin-top:0;">From <code style="font-family:var(--font-mono)">GET /api/v1/instruments</code> &mdash; these are what make the same risk budget produce a different lot size per instrument.</p>
+        <div id="instrumentSpec"></div>
       </div>
 
       <div class="panel">
@@ -424,6 +449,7 @@
         <span>No local MarketSpike instance connected — this tape is a client-side random walk, not market data.</span>
       </div>
       <div class="ticker-strip" id="tickerStrip"></div>
+      <p class="tick-rate" id="tickRate">feed &mdash; &middot; tape samples the stream, it does not log it</p>
     </div>
   </section>
 
@@ -464,7 +490,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const SYMBOL = "BTCUSDT";
+  const DEFAULT_SYMBOL = "BTCUSDT";
 
   let state = {
     apiBase: "https://marketspike.onrender.com",
@@ -473,6 +499,13 @@
     pollTimer: null,
     previewTimer: null,
     direction: "buy",
+    // Which instrument every symbol-scoped call is about. This was a hardcoded
+    // const, so the panel could only ever describe BTCUSDT -- even though the
+    // backend sizes six instruments, and their specs are exactly what make one
+    // risk budget come out as a different lot size per instrument.
+    symbol: DEFAULT_SYMBOL,
+    instruments: {},
+    accountCcy: "USD",
     eventWindow: 0,
     lastMid: 65210.5,
     regime: { state: "NORMAL", score: 0.3, v: 0.9, z: 0.4 }
@@ -484,7 +517,20 @@
     el.textContent = kind;
   }
 
-  function fmtUsd(n){ return "$" + Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
+  // Money comes back in minor units of the *account* currency, which the API
+  // echoes as inputs_echo.account_ccy -- so read the sign off the response
+  // rather than assuming a dollar. Lot sizing is driven by the instrument's
+  // quote_ccy instead, which can differ: BTCUSDT quotes in USDT, USDJPY in JPY.
+  const CCY_SIGN = {USD:"$", EUR:"\u20AC", GBP:"\u00A3", JPY:"\u00A5"};
+  function fmtMoney(n, ccy){
+    const ccyCode = ccy || state.accountCcy;
+    // Money always shows both minor digits: "$100" for a risk budget reads like
+    // a rounded figure, "$100.00" reads like an amount.
+    const amount = Number(n).toLocaleString(undefined,
+      {minimumFractionDigits:2, maximumFractionDigits:2});
+    return CCY_SIGN[ccyCode] ? CCY_SIGN[ccyCode] + amount : amount + " " + ccyCode;
+  }
+  function fmtUsd(n){ return fmtMoney(n, state.accountCcy); }
   function fmtUs(n){
     if(n == null) return "—";
     if(n >= 1000) return (n/1000).toFixed(2) + " ms";
@@ -530,6 +576,7 @@
       .forEach(id => setBadge($(id), "measured"));
     document.getElementById("tickerBanner").style.display = "none";
 
+    loadInstruments();
     pollAll();
     if(state.pollTimer) clearInterval(state.pollTimer);
     state.pollTimer = setInterval(pollAll, 5000);
@@ -550,13 +597,118 @@
     startPreview();
   }
 
+  // ---------------- instrument registry ----------------
+  async function loadInstruments(){
+    let specs;
+    try{
+      const res = await fetchJSON("/api/v1/instruments");
+      specs = res.instruments || [];
+    }catch(e){ return; }
+    if(!specs.length) return;
+
+    state.instruments = {};
+    specs.forEach(spec => { state.instruments[spec.symbol] = spec; });
+
+    // The registry lists every instrument the backend can size. MS_SYMBOLS
+    // decides which have a feed attached, and that changes what the numbers
+    // mean rather than whether they exist: an unfed symbol still sizes, but off
+    // fallback coefficients with stale_quote set and no regime. So it stays
+    // selectable, labelled, and the result box reports the degradation.
+    let feeds = {};
+    try{
+      const health = await fetchJSON("/api/v1/health");
+      feeds = health.feeds || {};
+    }catch(e){}
+
+    const sel = $("symbolSelect");
+    sel.innerHTML = "";
+    specs.forEach(spec => {
+      const opt = document.createElement("option");
+      opt.value = spec.symbol;
+      opt.textContent = spec.symbol + " \u00b7 " + spec.quote_ccy +
+        (feeds[spec.symbol] ? "" : " (no feed)");
+      sel.appendChild(opt);
+    });
+    if(!state.instruments[state.symbol]) state.symbol = specs[0].symbol;
+    if(!feeds[state.symbol]){
+      const fed = specs.find(spec => feeds[spec.symbol]);
+      if(fed) state.symbol = fed.symbol;
+    }
+    sel.value = state.symbol;
+    sel.disabled = false;
+    setBadge($("badgeSpec"), "measured");
+    applySymbol(null);
+  }
+
+  function pipsOf(priceDistance, spec){
+    if(!spec || !spec.pip_size) return null;
+    return priceDistance / spec.pip_size;
+  }
+  function lotDecimals(spec){
+    if(!spec || !spec.lot_step) return 4;
+    const text = String(spec.lot_step);
+    const dot = text.indexOf(".");
+    return dot < 0 ? 0 : text.length - dot - 1;
+  }
+
+  function applySymbol(fromSpec){
+    const spec = state.instruments[state.symbol];
+    $("statSymbol").textContent = state.symbol;
+    $("tickSymbol").textContent = state.symbol;
+
+    // Stop distance is in *price* units, so a bare 250 means 250 dollars on
+    // BTCUSDT and 250 euros on EURUSD -- four orders of magnitude apart. Carry
+    // the pip distance across an instrument change, not the raw number.
+    if(fromSpec && spec){
+      const pips = pipsOf(parseFloat($("inStop").value)||0, fromSpec);
+      if(pips != null && isFinite(pips)){
+        $("inStop").value = String(Number((pips * spec.pip_size).toPrecision(10)));
+      }
+    }
+    if(spec) $("inStop").step = String(spec.pip_size);
+
+    renderInstrumentSpec(spec);
+    renderStopHint();
+    // A tape still holding the previous instrument's prices under a new symbol
+    // label would be actively misleading.
+    $("tickerStrip").innerHTML = "";
+    state.lastMid = null;
+    subscribeWS();
+    if(state.live) pollAll();
+  }
+
+  function renderStopHint(){
+    const spec = state.instruments[state.symbol];
+    const stop = parseFloat($("inStop").value);
+    if(!spec || !isFinite(stop)){ $("stopHint").textContent = "\u2014"; return; }
+    $("stopHint").textContent =
+      "= " + Number(pipsOf(stop, spec).toFixed(2)).toLocaleString() + " pips \u00b7 " +
+      state.symbol + " pip size " + spec.pip_size + " \u00b7 priced in " + spec.quote_ccy;
+  }
+
+  function renderInstrumentSpec(spec){
+    const el = $("instrumentSpec");
+    if(!spec){
+      el.innerHTML = '<p class="hint">Not loaded \u2014 connect to read the registry.</p>';
+      return;
+    }
+    const row = (k, v) =>
+      '<div class="kv"><div class="kv-k">'+k+'</div><div class="kv-v">'+v+'</div></div>';
+    el.innerHTML =
+      row("quote currency", escapeHtml(spec.quote_ccy)) +
+      row("pip size", spec.pip_size) +
+      row("contract size", Number(spec.contract_size).toLocaleString()) +
+      row("min lot / step", spec.min_lot + " / " + spec.lot_step) +
+      row("margin rate", (spec.margin_rate*100).toFixed(2) + "%");
+  }
+
   async function pollAll(){
     try{
-      const regime = await fetchJSON("/api/v1/regime?symbol=" + SYMBOL);
+      const regime = await fetchJSON("/api/v1/regime?symbol=" + state.symbol);
       applyRegime(regime, "measured");
     }catch(e){}
     try{
-      const lat = await fetchJSON("/api/v1/latency/summary?symbol=" + SYMBOL);
+      const lat = await fetchJSON("/api/v1/latency/summary?symbol=" + state.symbol);
       applyLatency(lat, "measured");
     }catch(e){}
     try{
@@ -579,8 +731,19 @@
         try{ frame = JSON.parse(evt.data); }catch(e){ return; }
         handleFrame(frame);
       };
+      // The stream defaults to every symbol the instance feeds. The protocol
+      // has always supported narrowing it; the panel simply never asked, so a
+      // multi-symbol instance interleaved instruments into one tape.
+      ws.onopen = () => subscribeWS();
       ws.onerror = () => {};
       ws.onclose = () => { if(state.live){ /* leave REST polling running */ } };
+    }catch(e){}
+  }
+
+  function subscribeWS(){
+    if(!state.ws || state.ws.readyState !== 1) return;
+    try{
+      state.ws.send(JSON.stringify({type:"subscribe", symbols:[state.symbol]}));
     }catch(e){}
   }
 
@@ -676,21 +839,71 @@
   }
 
   // ---------------- ticker tape ----------------
+  //
+  // This is what made the bottom of the page crackle. The strip is 230px of
+  // column-reverse flex with overflow hidden, so an insert at its start edge
+  // reflows and repaints every row it holds -- and it held 40, of which only
+  // about 8 fit in view. One insert per frame at the feed's rate (MS_WS_MAX_HZ
+  // is 20/s) meant the whole strip was rebuilt 20 times a second, directly
+  // above the footer.
+  //
+  // Two fixes. Retain only the rows that can actually be seen, and let a single
+  // timer own the DOM: producers just record the newest tick, so a 20 Hz feed
+  // costs what a 1 Hz feed costs. Drawing fewer rows misreports nothing -- the
+  // readout under the tape counts every frame that arrives, not the rows drawn,
+  // and says so.
+  const TAPE_ROWS = 12;
+  const TAPE_HZ = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 2 : 8;
+  const RATE_WINDOW_MS = 5000;
+  let pendingTick = null;
+  let tapeTimer = null;
+  let frameTimes = [];
+
   function pushTick(t){
+    // Measured off every arriving frame, so the reported rate stays honest
+    // however rarely the tape is allowed to redraw.
+    frameTimes.push(Date.now());
+    pendingTick = t;
+    if(!tapeTimer) tapeTimer = setInterval(drainTape, Math.round(1000 / TAPE_HZ));
+  }
+
+  function drainTape(){
+    renderTickRate();
+    if(!pendingTick) return;
+    const t = pendingTick;
+    pendingTick = null;
     const strip = $("tickerStrip");
+    strip.insertBefore(buildTickRow(t), strip.firstChild);
+    while(strip.children.length > TAPE_ROWS) strip.removeChild(strip.lastChild);
+  }
+
+  function buildTickRow(t){
     const row = document.createElement("div");
     row.className = "tick-row";
-    const dir = t.mid >= state.lastMid ? "up" : "down";
+    // The first tick after a symbol change has no previous mid to compare
+    // against, so it is neither up nor down rather than arbitrarily "down".
+    const dir = state.lastMid == null ? "" : (t.mid >= state.lastMid ? "up" : "down");
     state.lastMid = t.mid;
+    // EURUSD at 2 decimals reads "1.09" for every row. Scale to the instrument.
+    const digits = t.mid != null && Math.abs(t.mid) < 10 ? 5 : 2;
     const spreadBps = t.bid && t.ask ? ((t.ask - t.bid)/t.mid*10000).toFixed(4) : "—";
     row.innerHTML =
       '<span>'+t.time.toLocaleTimeString()+'</span>'+
-      '<span class="'+dir+'">'+(t.bid!=null? t.bid.toFixed(2):"—")+'</span>'+
-      '<span class="'+dir+'">'+(t.ask!=null? t.ask.toFixed(2):"—")+'</span>'+
+      '<span class="'+dir+'">'+(t.bid!=null? t.bid.toFixed(digits):"—")+'</span>'+
+      '<span class="'+dir+'">'+(t.ask!=null? t.ask.toFixed(digits):"—")+'</span>'+
       '<span>'+spreadBps+' bps</span>'+
       '<span><span class="badge badge-'+t.source+'">'+t.source+'</span></span>';
-    strip.insertBefore(row, strip.firstChild);
-    while(strip.children.length > 40) strip.removeChild(strip.lastChild);
+    return row;
+  }
+
+  function renderTickRate(){
+    const cutoff = Date.now() - RATE_WINDOW_MS;
+    while(frameTimes.length && frameTimes[0] < cutoff) frameTimes.shift();
+    const hz = frameTimes.length / (RATE_WINDOW_MS/1000);
+    $("tickRate").textContent =
+      "feed " + hz.toFixed(1) + " ticks/s · tape draws " + TAPE_HZ +
+      "/s, keeps " + TAPE_ROWS + " rows — it samples the stream, it does not log it";
   }
 
   // ---------------- preview / simulated generators ----------------
@@ -785,11 +998,12 @@
           method:"POST",
           headers:{"Content-Type":"application/json"},
           body: JSON.stringify({
-            symbol: SYMBOL,
+            symbol: state.symbol,
             account_balance_minor: Math.round(balance*100),
             risk_pct: risk,
             stop_distance_price: stop,
-            free_margin_minor: Math.round(margin*100)
+            free_margin_minor: Math.round(margin*100),
+            direction: state.direction
           })
         });
         renderSizeResult(res, "measured");
@@ -812,26 +1026,81 @@
 
   function renderSizeResult(res, source){
     const box = $("sizeResult");
-    const lots = res.lots != null ? Number(res.lots).toFixed(4) : "—";
-    const risk = res.actual_risk_amount_minor != null ? fmtUsd(res.actual_risk_amount_minor/100) : "—";
-    const overexp = res.overexposure_pct != null ? Number(res.overexposure_pct).toFixed(1)+"%" : "—";
+    const spec = state.instruments[state.symbol];
+    const dp = lotDecimals(spec);
+    const echo = res.inputs_echo || {};
+    if(echo.account_ccy) state.accountCcy = echo.account_ccy;
+
+    // The response field is `recommended_lot_size`. Reading `res.lots` -- which
+    // this API has never returned -- is why the headline number rendered as an
+    // em dash on every live request: the one figure the panel exists to show.
+    // `naive_lot_size` was being dropped the same way.
+    const num = (v, digits) => v != null ? Number(v).toFixed(digits) : "—";
+    const lots = num(res.recommended_lot_size, dp);
+    const naive = num(res.naive_lot_size, dp);
+    const overexp = res.overexposure_pct != null
+      ? Number(res.overexposure_pct).toFixed(1)+"%" : "—";
+    const row = (k, v) =>
+      '<div class="kv"><div class="kv-k">'+k+'</div><div class="kv-v">'+v+'</div></div>';
+
+    // Anything that degrades the answer is stated rather than left buried in the
+    // raw JSON: an unfed instrument still sizes, but off fallback coefficients
+    // with no regime and a stale quote, and that has to be visible.
+    const flags = [];
+    if(res.stale_quote) flags.push("stale quote");
+    if(res.fx_assumed) flags.push("fx assumed");
+    if(res.capped_by) flags.push("capped by " + res.capped_by);
+    (res.warnings || []).forEach(w => flags.push(String(w)));
+
     box.innerHTML =
       '<span class="badge badge-'+source+'">'+source+'</span>'+
+      (flags.length
+        ? ' <span class="badge badge-estimated">'+escapeHtml(flags.join(" · "))+'</span>'
+        : '')+
       '<div class="bignum" style="margin-top:8px;">'+lots+' lots</div>'+
-      '<div class="kv"><div class="kv-k">actual risk</div><div class="kv-v">'+risk+'</div></div>'+
-      '<div class="kv"><div class="kv-k">overexposure vs. naive</div><div class="kv-v">'+overexp+'</div></div>'+
-      '<div class="kv"><div class="kv-k">model source</div><div class="kv-v">'+(res.model_source||"—")+'</div></div>'+
-      '<div class="kv"><div class="kv-k">fx assumed</div><div class="kv-v">'+(res.fx_assumed!=null?String(res.fx_assumed):"—")+'</div></div>'+
+      '<div class="stat-sub" style="margin:0 0 10px;">'+escapeHtml(state.symbol)+
+        (spec ? ' · min ' + spec.min_lot + ' · step ' + spec.lot_step : '')+'</div>'+
+      row("naive (spread-only) lots", naive)+
+      row("overexposure vs. naive", overexp)+
+      row("actual risk", res.actual_risk_amount_minor != null
+        ? fmtMoney(res.actual_risk_amount_minor/100) + " (" +
+          num(res.actual_risk_pct, 3) + "% of balance)" : "—")+
+      row("required margin", res.required_margin_minor != null
+        ? fmtMoney(res.required_margin_minor/100) : "—")+
+      row("stop distance", num(res.stop_distance_pips, 1) + " pips")+
+      row("slippage p50 / p95", num(res.slippage_p50_pips, 4) + " / " +
+        num(res.slippage_p95_pips, 4) + " pips")+
+      row("effective adverse move", num(res.effective_adverse_pips, 4) + " pips")+
+      row("direction", escapeHtml(echo.direction || state.direction))+
+      row("regime at calc", escapeHtml(String(res.regime_at_calc || "—")) +
+        " · " + escapeHtml(String(res.event_context || "—")))+
+      row("latency used", num(res.latency_used_ms, 1) + " ms" +
+        (res.latency_source ? ' <span class="badge badge-'+
+          (res.latency_source === "measured" ? "measured" : "estimated")+'">'+
+          escapeHtml(res.latency_source)+'</span>' : ''))+
+      row("model", escapeHtml(String(res.model_source || "—")) +
+        (res.model_version ? " · " + escapeHtml(String(res.model_version)) : ""))+
       '<pre class="raw">'+escapeHtml(JSON.stringify(res,null,2))+'</pre>';
+
     $("statOverexp").textContent = overexp;
-    $("statOverexpSub").textContent = "reported by /api/v1/size for the current inputs";
+    $("statOverexpSub").textContent = "reported by /api/v1/size for " + state.symbol;
   }
 
-  document.querySelectorAll("#dirToggle .toggle-opt").forEach(el => {
+  // Direction feeds both /slippage/predict and /size, so it is one setting
+  // rendered as two toggles -- clicking either keeps both in step rather than
+  // letting the panel show "Buy" while sizing a sell.
+  function setDirection(dir){
+    state.direction = dir;
+    ["#dirToggle", "#sizeDirToggle"].forEach(sel => {
+      document.querySelectorAll(sel + " .toggle-opt").forEach(o => {
+        o.classList.toggle("active", o.dataset.dir === dir);
+      });
+    });
+  }
+
+  document.querySelectorAll("#dirToggle .toggle-opt, #sizeDirToggle .toggle-opt").forEach(el => {
     el.addEventListener("click", () => {
-      document.querySelectorAll("#dirToggle .toggle-opt").forEach(o=>o.classList.remove("active"));
-      el.classList.add("active");
-      state.direction = el.dataset.dir;
+      setDirection(el.dataset.dir);
     });
   });
   document.querySelectorAll("#eventToggle .toggle-opt").forEach(el => {
@@ -846,7 +1115,7 @@
     const secs = parseFloat($("inSecsToEvent").value)||0;
     const delta = parseFloat($("inDelta").value)||60;
     const payload = {
-      symbol: SYMBOL,
+      symbol: state.symbol,
       direction: state.direction,
       signed_secs_to_event: secs,
       in_event_window: !!state.eventWindow,
@@ -886,10 +1155,23 @@
     $("predictRaw").textContent = JSON.stringify(res, null, 2);
   }
 
+  $("symbolSelect").addEventListener("change", (e) => {
+    const previous = state.instruments[state.symbol];
+    state.symbol = e.target.value;
+    applySymbol(previous);
+  });
+  $("inStop").addEventListener("input", renderStopHint);
+
   $("connectBtn").addEventListener("click", tryConnect);
   $("apiBaseInput").addEventListener("keydown", (e) => { if(e.key==="Enter") tryConnect(); });
 
   // boot
+  //
+  // Render the instrument panels before any network call, so preview mode shows
+  // the registry as "not loaded" rather than as two blank regions.
+  renderInstrumentSpec(state.instruments[state.symbol]);
+  renderStopHint();
+  setDirection(state.direction);
   tryConnect();
 })();
 </script>

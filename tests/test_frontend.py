@@ -114,3 +114,76 @@ def test_repo_root_is_not_published_over_http():
     for path in ("/render.yaml", "/model.json", "/marketspike/config.py",
                  "/static/index.html", "/.git/config"):
         assert client.get(path).status_code == 404, path
+
+
+def _render_size_result_body() -> str:
+    """The body of the panel's renderSizeResult(), with // comments stripped.
+
+    Scoped to that one function because `res` is a local name reused by other
+    handlers (/instruments, /slippage/predict) and by fetchJSON, and comments
+    quote the old field names on purpose.
+    """
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    start = page.index("function renderSizeResult(")
+    end = page.index("\n  }", start)
+    body = page[start:end]
+    return "\n".join(
+        line for line in body.split("\n") if not line.strip().startswith("//")
+    )
+
+
+def test_panel_reads_the_lot_field_the_api_actually_returns():
+    """Guard the bug this replaced: the panel read `res.lots`, which
+    POST /api/v1/size has never returned, so its headline number -- the lot
+    size, the one figure the panel exists to show -- rendered as an em dash on
+    every live request. Assert it names the real fields, not the invented one.
+    """
+    body = _render_size_result_body()
+    assert "res.recommended_lot_size" in body
+    assert "res.naive_lot_size" in body
+    assert "res.lots" not in body
+
+
+def test_size_request_carries_the_symbol_and_direction():
+    # Direction changes the answer (a sell is sized off a different slippage
+    # quantile than a buy), and symbol selects the instrument spec that turns a
+    # risk budget into lots. Both must reach the endpoint.
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    body = page.split('"/api/v1/size"', 1)[1][:600]
+    assert "symbol: state.symbol" in body
+    assert "direction: state.direction" in body
+
+
+def test_panel_field_names_match_the_size_response_schema():
+    """Every `res.<field>` the panel reads must exist in the response model, so
+    a rename on the backend fails here rather than silently rendering dashes.
+    """
+    import re
+
+    from marketspike.api import schemas
+
+    read = set(re.findall(r"\bres\.([a-z_][a-z0-9_]*)\b", _render_size_result_body()))
+    model = next(
+        cls for name, cls in vars(schemas).items()
+        if name.lower().startswith("size") and hasattr(cls, "model_fields")
+        and "recommended_lot_size" in cls.model_fields
+    )
+    unknown = read - set(model.model_fields)
+    assert not unknown, "panel reads fields absent from {0}: {1}".format(
+        model.__name__, sorted(unknown)
+    )
+
+
+def test_tape_is_capped_to_what_the_strip_can_show():
+    """The footer 'crackle': the tape kept 40 rows in a 230px column-reverse box
+    with overflow hidden and inserted one per frame at the feed's rate (20/s),
+    so every tick reflowed 40 rows directly above the footer. Assert the cap is
+    small, the draw rate is decoupled from the feed, and the box is contained.
+    """
+    page = INDEX_HTML.read_text(encoding="utf-8")
+    assert "const TAPE_ROWS = 12;" in page
+    assert "const TAPE_HZ" in page
+    assert "contain:content; overflow-anchor:none;" in page
+    # The row cap must be enforced against TAPE_ROWS, not a literal 40.
+    assert "strip.children.length > TAPE_ROWS" in page
+    assert "strip.children.length > 40" not in page
