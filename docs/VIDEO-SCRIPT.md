@@ -1,12 +1,18 @@
 # MarketSpike — 3-minute video transcript
 
-Spoken word count: **~490 → about 3:05** at a 155–165 wpm delivery (3:22 if you read slowly at
-145). Bracketed lines are screen cues and are not spoken. If you need a hard 3:00, cut the
-venue-to-receive sentence in *How it works* — it is the one passage the argument survives losing.
+Spoken lines only are read aloud; bracketed lines are screen cues.
 
-Record against the live service — <https://marketspike.onrender.com> — so nothing depends on a
-local process staying up. Load a captured spike scenario before you hit record; the pre-flight
-checklist is in `DEMO.md`.
+**Pacing, honestly: the full read is 528 words — about 3:12 at 165 wpm, 3:24 at a normal 155.**
+This version trades some length for technical density. Dropping the two passages marked
+*[cut-1]* and *[cut-2]* below (52 words) puts it at 476 — 3:04 at 155, 2:58 at 160 — and the
+argument is unaffected by either. Recount with the snippet under *Pacing* after any edit.
+
+Record against the live service — <https://marketspike.onrender.com> — so nothing rides on a
+local process staying up, and load a captured spike scenario before you hit record. The
+pre-flight checklist lives in `DEMO.md`.
+
+Tone: talking to another engineer who trades, not to a judging panel. Say the numbers plainly;
+they do the work on their own.
 
 ---
 
@@ -14,74 +20,100 @@ checklist is in `DEMO.md`.
 
 *[Instrument panel, BTCUSDT streaming, latency waterfall moving]*
 
-> Every position-size calculator a retail trader has used computes the same thing: risk budget,
-> divided by stop distance times pip value. That formula assumes you get filled at the price you
-> saw, at the moment you saw it.
+> Quick tour of MarketSpike, and the one number it exists to produce.
 >
-> Both fail hardest during a release — payrolls, CPI, FOMC — when sizing matters most. Spreads
-> widen, quotes arrive late, and the fill lands worse than the price you decided on.
+> Every retail position-size calculator computes this: lots equals risk budget, over stop
+> distance times pip value. Clean formula — and it quietly assumes you're filled at the price on
+> your screen, the instant you saw it. Both halves break during a CPI or payrolls print, which is
+> exactly when your size matters.
 
-## 0:20 — What this is
+## 0:20 — The fix, in one line
 
-> MarketSpike measures the two costs that formula leaves out — execution latency and expected
-> slippage — and returns a size that accounts for both. The gap between the two answers is one
-> number: **overexposure percent**. The extra risk the conventional calculator hands you.
+> So we put the missing term back. Effective stop equals your stop **plus predicted slippage at
+> the ninety-fifth percentile**, and we size off that. Same risk budget, honest denominator. The
+> distance between the two answers is `overexposure_pct` — the extra risk the old formula handed
+> you.
 
-## 0:35 — How it works
+## 0:40 — How it works
 
 *[Cut to the architecture diagram]*
 
-> Live ticks arrive from Binance. Each one gets a single engine pass: timestamp its arrival,
-> update two volatility horizons, compute a robust spread z-score, blend those into one score,
-> and run a regime state machine — normal, elevated, spike.
+> Ticks come off Binance's WebSocket into one engine pass each. Two EWMA variance horizons —
+> thirty seconds fast, eighteen hundred slow, normalised per second so the ratio `V` is
+> dimensionless. A spread z-score off median and MAD, so one bad quote can't move it. Those blend
+> into a score bounded zero to four, driving a regime machine with real hysteresis: enter elevated
+> above 1.5 after three seconds, leave below 1.1 after fifteen. Asymmetric on purpose — missing a
+> spike costs a trader money, a warning that lingers costs nothing.
 >
-> Latency is measured in three hops, each labelled honestly. Receive-to-engine is exact — one
-> machine, one clock. Engine-to-browser uses an NTP-style handshake. Venue-to-receive can't be
-> measured at all — what you see is clock skew plus transit, inseparable from one sample — so we
-> never claim it. We report the excess above a rolling minimum, which cancels the skew.
+> Latency is three hops, each labelled. Receive-to-engine is exact: one machine, one monotonic
+> clock. Engine-to-browser is a four-timestamp NTP handshake. Venue-to-receive we refuse to
+> claim — what you see is skew plus transit, and one sample can't split them — so we report only
+> the excess above a rolling minimum.
 >
-> And this is what makes it one tool instead of two: that measured latency is an **input feature**
-> to the slippage model. You decide at time *t*, your order lands at *t* plus delta, and what you
-> pay depends on what the market did in between. Latency is a term inside the calculator, not a
-> metric beside it.
+> Then nine features into linear quantile regression on pinball loss: log v-ratio, spread z, log
+> spread, **log latency**, quote rate, book imbalance, signed seconds to the nearest event, an
+> in-event-window flag, and a five-second absolute return. Notice latency in the feature vector —
+> your broker's speed is an input to the cost model, not an ornament on the dashboard.
 
-## 1:25 — The demo
+## 1:35 — The demo
 
-*[Call `/size` with the regime showing NORMAL]*
+*[Call `/size`, regime NORMAL]*
 
-> Calm market. Naive size, four-tenths of a lot. Ours, essentially the same — overexposure under
-> a tenth of a percent. This is why nobody notices the problem: in a quiet market the old formula
-> is basically right.
+> Calm market. Naive, four-tenths of a lot; ours, essentially identical; overexposure
+> eight-hundredths of a percent. Nothing to see — that's the point. On a quiet tape the old
+> formula is basically right, which is why nobody believes there's a problem.
 
-*[Start the replay; regime climbs NORMAL → ELEVATED → SPIKE]*
+*[Start the replay; NORMAL → ELEVATED → SPIKE]*
 
-> Now a release hits. Spread widens, latency p99 blows out, the regime escalates.
+> Now replay a print. Spread widens, p99 latency blows out, the regime steps up.
 
 *[Call `/size` again]*
 
-> Same trader, same risk budget, same stop — and the gap opens. Every retail calculator just
-> handed this trader more risk than they asked for, at the moment it's most dangerous.
+> Size again, and the gap opens.
+>
+> *[cut-2]* What comes back is floored to the instrument's lot step and re-checked against free
+> margin, so `actual_risk` is computed at the size you can really trade — not the one you asked
+> for.
 
-## 2:00 — Why believe it
+## 2:10 — Why believe the slippage number
 
 *[Open `/model/card`]*
 
-> The baseline we beat is *cost equals the current half-spread* — what a calculator assumes when
-> it ignores slippage.
+> The baseline is `cost = current half-spread` — literally the assumption we're replacing. Over
+> twenty-three thousand real ticks, median realised cost lands on the half-spread to the digit;
+> p95 is two hundred and sixty-five times that.
 >
-> Over twenty-three thousand real ticks, median realised cost lands on the half-spread to the
-> digit — exactly what the model's structure predicts. The ninety-fifth percentile is two hundred
-> and sixty-five times the median, and that gap is the whole argument for sizing off the tail.
->
-> We beat the baseline only in that tail. At p50 we lose to it slightly — the p50 target *is* the
-> half-spread, so the baseline is provably optimal there. The claim was never that these
-> calculators are bad at arithmetic. It's that they're right about the average case and blind to
-> the case that hurts you.
+> We beat it by five percent at p95 and lose two at p50 — and losing at p50 is the correct
+> result: the p50 target *is* the half-spread, so the baseline is optimal there by construction.
+> The split is time-ordered, never shuffled, and the feature builder raises `LeakageError` if the
+> target isn't strictly after the decision. *[cut-1]*
 
 ## 2:45 — Close
 
-> Every number here declares its provenance: measured, estimated, or simulated. Nothing synthetic
-> is shown as measured. And the model ships as three kilobytes of JSON — inference is a dot
-> product, with nothing to install.
+> Every number carries its provenance — measured, estimated, or simulated. An untrained model
+> says `fallback_coefficients` out loud instead of pretending. And it all ships as three
+> kilobytes of JSON, so inference is a dot product with nothing to install.
 >
-> That's MarketSpike.
+> That's MarketSpike. Thanks for watching.
+
+---
+
+## Pacing
+
+Recount after any edit:
+
+```bash
+python3 - <<'PY'
+import re
+spoken = [l[1:] for l in open('docs/VIDEO-SCRIPT.md') if l.startswith('>')]
+w = len(re.findall(r"[\w'’%-]+", " ".join(spoken)))
+print(w, "words →", round(w/155, 2), "min at 155 wpm")
+PY
+```
+
+If you overrun, cut in this order — each is self-contained, and the argument survives all three:
+
+1. `[cut-1]` the `LeakageError` sentence — 20 words,
+2. `[cut-2]` the lot-step / free-margin sentence — 32 words,
+3. the venue-to-receive hop — 28 words. Losing this one costs the most: it is the sharpest
+   evidence that the project declines to claim things it can't measure.
